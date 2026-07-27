@@ -1,172 +1,144 @@
 # LeagueMacroCoach — Project Checkpoint
 
-Handoff summary for continuing development. Everything below reflects the state of the repo as of this checkpoint: a complete rule-based pipeline from raw match retrieval through structured player insights, now with per-event timeline enrichment. **No AI/LLM code exists anywhere yet** — that has been deliberately deferred at every phase.
+Handoff summary for continuing development. Everything below reflects the state of the repo as of this checkpoint: a complete rule-based coaching pipeline — match retrieval through structured player insights, timeline enrichment, a deterministic item recommendation engine, a cross-pipeline coaching-session aggregator, and a benchmark-comparison foundation — plus one clearly-optional AI phrasing layer. **No part of the tool requires a paid API to function.** This supersedes the original checkpoint's "what's built" and "what's next" sections; those phases are complete and summarized below rather than repeated in full (see git history for the turn-by-turn build order).
 
-Player profile (`data/player_profile.json`): Riot ID `HelloKittler#meow`, NA, Mid, champion pool Yone/Akali/Fizz/Syndra (learning). **The backfill has been run**: 20 real ranked games are now in `data/database/game_history.json` (mostly Akali/Yone, one Pyke support game, one Zoe, one Syndra). None of those 20 games have cached timeline data yet — the timeline feature was built after that backfill ran, so it hasn't been exercised against real matches yet (see Limitations).
+Player profile (`data/player_profile.json`): Riot ID `HelloKittler#meow`, NA, Mid, champion pool Yone/Akali/Fizz/Syndra. **20 real ranked games are in `data/database/game_history.json`**, all with timeline data enriched (deaths-before-objectives, objective-fight-presence are real numbers, not `"unavailable"`, for all 20).
 
-## 1. What was built
+## 1. What's built
 
-An end-to-end, rule-based coaching-data pipeline:
+**Rule-based macro pipeline (complete, exercised against real data):**
+1. Riot API client — auth, PUUID lookup, match ID retrieval, match + timeline retrieval.
+2. Multi-match importer/backfill — pulls N recent ranked matches, dedupes, runs each through the full pipeline, isolates per-match failures. `enrich_existing_timelines()` backfills timeline data onto matches imported before timeline support existed.
+3. Structured analyzer — raw match → flat per-game stats.
+4. Timeline analyzer — raw timeline → per-event derived facts (death timing vs. objectives, objective participation, fight participation). Only processes timeline *events*; does not parse per-minute `participantFrames` (see Limitations).
+5. Macro pattern analyzer — threshold-based pattern flags, knowledge-aware de-prioritization, timeline-enriched when available.
+6. Champion/role knowledge layer — hand-written markdown parsed into structured dicts.
+7. History storage/aggregation — flat-JSON, upsert by match_id, cross-game trends and repeated-pattern detection.
+8. Player profile + insight generation — `profile_summary.json` → `player_insights.json`, count-based confidence, honest `"insufficient_data"` handling.
 
-1. **Riot API client** — auth, PUUID lookup, ranked match ID retrieval (single + batch), full match retrieval.
-2. **Multi-match importer** — pulls N recent ranked matches, dedupes against history and cached raw files, runs each new match through the full pipeline, isolates per-match failures.
-3. **Structured analyzer** — reshapes one raw Riot match into flat per-game stats (KDA, CS/min, gold, damage, damage share, objectives, vision, timestamp).
-4. **Macro pattern analyzer** — rule-based threshold checks (deaths, farming, objectives, vision) producing `concern`/`tier`/`confidence` per pattern; explicitly marks checks that need data not yet collected (match timeline, opponent stats) as `confidence: "unavailable"` rather than faking them.
-5. **Champion/role knowledge layer** — hand-written markdown (5 champions, 2 roles) parsed into structured dicts; used to de-prioritize metrics a champion/role explicitly expects to be low (e.g. CS/min for Pyke) so they're reported but not flagged as concerns.
-6. **History storage** — flat-JSON store of one record per game, upserted by `match_id`.
-7. **History aggregation** — most-played champions, per-champion/role averages, repeated weaknesses/strengths (pattern seen in ≥2 games), earlier-half-vs-later-half trend comparison.
-8. **Player profile generator** — shapes aggregation output into a fixed `profile_summary.json` schema.
-9. **Insight engine** — reshapes `profile_summary.json` into `player_insights.json` (player summary, strengths, weaknesses, priority improvements), with count-based confidence and honest `"insufficient_data"` handling.
-10. **Backfill workflow** — a thin, configurable-count CLI wrapper around the existing importer, purpose-built for bulk-importing history in one run rather than one match at a time. Adds no new retrieval/analysis/storage logic of its own.
+**Deterministic item recommendation engine (complete, exercised against real data):**
+9. `GameSnapshot` architecture (`src/analysis/game_state.py`) — source-agnostic shape, deliberately built so a future live-data builder can produce the same shape without touching anything downstream.
+10. Item recommendation engine (`src/analysis/item_recommender.py`) — keyword-matched trigger evaluation against qualitative item knowledge, deterministic confidence scoring with a full breakdown, gold-aware `recommendation_type` (`complete_item`/`component`/`alternative`/`save_gold`), Data Dragon cross-check that flags (never silently drops or trusts) unrecognized item names.
+11. Data Dragon static client (`src/riot/data_dragon.py`) — self-updates per patch automatically (see `PATCH_SYSTEM.md`).
 
-## 2. Files created
+**Optional AI phrasing layer (complete, never required):**
+12. `src/ai/prompt_builder.py` / `validator.py` / `client.py` / `report_generator.py` — grounds a prompt in already-computed insights + knowledge, strips any model output not traceable to real data, opt-in Anthropic backend. The tool works fully without this layer; `ROADMAP.md` still recommends a free deterministic backend as the actual default (not yet built — see Next Milestone).
 
-```
-src/riot/client.py, __init__.py
-src/analysis/analyzer.py, macro_analyzer.py, __init__.py
-src/knowledge/loader.py, __init__.py
-src/history/store.py, aggregate.py, importer.py, backfill.py, __init__.py
-src/profile/generator.py, __init__.py
-src/insights/engine.py, __init__.py
-src/main.py, src/__init__.py
+**Coaching-session aggregation layer (complete, exercised against real data):**
+13. `src/coaching/coaching_report.py` — combines `player_insights.json`, one match's macro patterns + item recommendations, and (if present) a benchmark comparison into one `coaching_session.json`. Pure combination, no new analysis.
+14. `src/coaching/priorities.py` — selects top 1–3 lessons, preferring cross-game recurring patterns over this-game-only observations, explicitly labeled by evidence `scope`.
+15. `src/coaching/formatter.py` — pure terminal rendering, no decision-making.
 
-knowledge/champions/{yone,akali,fizz,syndra,pyke}.md
-knowledge/roles/{mid,support}.md
-knowledge/coaching_philosophy.md
-data/player_profile.json
+**Benchmark comparison foundation (complete, zero real data by design):**
+16. `src/benchmark/benchmark_schema.py` — benchmark entry shape + `METRIC_DIRECTIONS` registry (direction-aware: higher-is-better vs. lower-is-better).
+17. `src/benchmark/storage.py` — flat-JSON load/save/upsert, mirroring `history/store.py`'s pattern; `find_benchmarks()` supports arbitrary extra descriptor filters (e.g. a future `matchup` field) with no code changes needed later.
+18. `src/benchmark/comparison.py` — direction-aware gap-ratio severity scoring, verified against a hand-worked example before trusting the formula.
+19. `src/coaching/benchmark_section.py` — wires stored benchmarks into `coaching_session.json` as a strictly informational section. **Benchmark gaps never become coaching priorities** — verified by a test that builds the same session with and without benchmark data present and asserts `main_lessons`/`next_game_focus` are identical either way.
+20. **No real benchmark data exists anywhere in the repo.** `data/benchmarks/` isn't even created yet. No scraping, no AI-sourced numbers — this is 100% foundation, verified only with synthetic test fixtures.
 
-tests/test_riot_client.py
-tests/test_analyzer.py
-tests/test_macro_analyzer.py
-tests/test_knowledge_loader.py
-tests/test_history_store.py
-tests/test_history_aggregate.py
-tests/test_importer.py
-tests/test_profile_generator.py
-tests/test_insight_engine.py
-tests/test_backfill.py
+**Architecture/planning documentation (complete):**
+21. `ROADMAP.md`, `ARCHITECTURE_AUDIT.md`, `TEST_AUDIT.md`, `KNOWLEDGE_SYSTEM_PLAN.md`, `LIVE_SYSTEM_DESIGN.md`, `UI_DESIGN.md`, `PATCH_SYSTEM.md` — a full engineering review and forward design pass covering everything not yet built (live game state, overlay UI, knowledge scaling, patch handling).
 
-.env, .env.example, .gitignore, requirements.txt, README.md, .venv/
-```
-
-Generated (not hand-authored, produced by running the pipeline):
-`data/raw_matches/NA1_5609585521.json`, `data/database/game_history.json`, `reports/generated_reports/NA1_5609585521_analysis.json`, `..._macro_patterns.json`, `profile_summary.json`, `player_insights.json`.
-
-## 3. Files modified (iterative, across phases)
-
-Nothing existing was modified to add the backfill workflow — `backfill.py` only calls `importer.run_import()` as-is. The list below is unchanged from the prior checkpoint.
-
-- **`src/main.py`** — added Match ID to the printed summary.
-- **`src/analysis/analyzer.py`** — added `game_start_timestamp` (for chronological trend ordering) and `damage_share` (per-participant damage ÷ team damage, both computed from data already in the raw match).
-- **`src/analysis/macro_analyzer.py`** — added knowledge-context de-prioritization; added an explicit `tier` field (`low`/`adequate`/`good`) alongside `concern` so downstream code doesn't need to parse the `detail` string; fixed a keyword-matching bug where `"farm"` in a vision-score knowledge bullet incorrectly suppressed CS/min concerns.
-- **`src/riot/client.py`** — added `get_ranked_match_ids(count=N)`; the old single-match function now calls it with `count=1` instead of duplicating the request logic.
-- **`src/history/store.py`** — added `damage_share` to the stored game record; `load_history`/`save_history`/`record_game` accept an injectable `path` for test isolation.
-- **`src/history/aggregate.py`** — renamed `_avg` → `avg` (now used cross-module by `generator.py`); factored `repeated_weaknesses`/`repeated_strengths` onto one shared `_repeated_patterns(predicate)` helper; **removed** `build_profile_summary()`/`main()` — see architectural note below.
-
-## 4. Current architecture pipeline
+## 2. Current Architecture
 
 ```
-src/history/backfill.py  (CLI, configurable --count, default 20)
-        │  calls run_import(count) as-is
-        ▼
-Riot API
-   │
-   ▼
-src/riot/client.py ──(get_ranked_match_ids, get_match)──▶ src/history/importer.py
-                                                                  │
-                              dedup against game_history.json ───┤
-                              dedup against data/raw_matches/ ───┤
-                                                                  ▼
-                                                     data/raw_matches/{id}.json
-                                                                  │
-                                                                  ▼
-                                                    src/analysis/analyzer.py
-                                                                  │
-                                              reports/generated_reports/{id}_analysis.json
-                                                                  │
-                                    knowledge/{champions,roles}/*.md ──▶ src/knowledge/loader.py
-                                                                  │              │
-                                                                  ▼              │
-                                              src/analysis/macro_analyzer.py ◀───┘
-                                                                  │
-                                        reports/generated_reports/{id}_macro_patterns.json
-                                                                  │
-                                                                  ▼
-                                                      src/history/store.py
-                                                                  │
-                                                data/database/game_history.json
-                                                                  │
-                                                                  ▼
-                                                    src/history/aggregate.py
-                                                                  │
-                                                                  ▼
-                                                    src/profile/generator.py
-                                                                  │
-                                            reports/generated_reports/profile_summary.json
-                                                                  │
-                                                                  ▼
-                                                    src/insights/engine.py
-                                                                  │
-                                            reports/generated_reports/player_insights.json
-                                                                  │
-                                                                  ▼
-                                                    (AI coaching layer — not built yet)
+Riot API ──▶ src/riot/client.py ──▶ data/raw_matches/, data/raw_matches/timelines/
+Data Dragon ─▶ src/riot/data_dragon.py ─▶ data/static/ (cached item catalog)
+                              │
+                              ▼
+        src/analysis/analyzer.py, timeline_analyzer.py
+                              │
+knowledge/champions/, roles/ ◀┤ (src/knowledge/loader.py)
+                              ▼
+              src/analysis/macro_analyzer.py
+                              │
+                              ▼
+      src/history/store.py → game_history.json
+                              │
+                              ▼
+   src/history/aggregate.py → src/profile/generator.py
+                              │
+                              ▼
+        src/insights/engine.py → player_insights.json
+                              │                              ┌── independent pipeline ──┐
+                              │                    src/analysis/game_state.py (GameSnapshot)
+                              │                              │
+                              │                knowledge/items/ ◀┤ (src/knowledge/item_loader.py)
+                              │                              ▼
+                              │                src/analysis/item_recommender.py
+                              │                              │
+                              │                {match}_item_recommendations.json
+                              │                              │
+                              ▼                              ▼
+                    ┌─────────────────────────────────────────────┐
+                    │        src/coaching/coaching_report.py       │
+                    │  (combines insights + macro patterns +       │
+                    │   item recommendations + benchmark section)  │
+                    └─────────────────────┬─────────────────────────┘
+                                          ▼
+                              coaching_session.json
+                                          │
+                              src/coaching/formatter.py (terminal output)
+
+              ┌── benchmark pipeline, no real data yet ──┐
+knowledge/items/-style      src/benchmark/storage.py (data/benchmarks/, empty)
+qualitative discipline               │
+              (future: Challenger/pro/patch/matchup sources)
+                                      ▼
+                    src/benchmark/comparison.py ──▶ src/coaching/benchmark_section.py
+                    (feeds into coaching_session.json's "benchmark" key, informational only)
+
+          src/ai/ (optional, opt-in, never required) ──▶ its own coaching_report.json
 ```
 
-## 5. Data flow changes over the course of this build
+Two things worth being precise about, since they're easy to conflate:
+- `src/ai/report_generator.py` writes `coaching_report.json` (optional, LLM-based). `src/coaching/coaching_report.py` writes `coaching_session.json` (required-path, deterministic). Different files, similar names, by explicit design choice at the time — see the relevant turn's plan discussion if this needs to be renamed later.
+- The item-recommendation pipeline is **not yet wired into `src/history/importer.py`'s automatic per-match run** — it's currently invoked separately via `item_recommender.main()`. This means `coaching_session.json`'s item-review section will show `"unavailable"` for any match that hasn't had that separate step run on it, which is correct/honest behavior, not a bug (see `ARCHITECTURE_AUDIT.md` §5).
 
-- Started as a **single manual match** flow (`src/main.py`: one Riot API call → one printed summary).
-- Became a **single-match analysis pipeline** (analyzer → macro analyzer → one JSON report per match).
-- Became **multi-match and persistent** once `src/history/` was added: every analyzed match now accumulates in `game_history.json` instead of being a one-off report.
-- Became **automated ingestion** once `importer.py` was added: one call now pulls N ranked matches, skips anything already processed, and feeds every new one through the full analyzer → macro → store chain.
-- Became **cross-game aggregate** once `aggregate.py` / `generator.py` / `engine.py` were layered on: individual match reports now feed a standing player profile and insight summary that updates as more games are imported, rather than each match being analyzed in isolation.
-- Became **bulk-loadable** once `backfill.py` was added: instead of running the importer once per small batch, one CLI call now sweeps a configurable number of recent ranked games in a single pass — a pure convenience layer, no new data path.
+## 3. Current Limitations
 
-## 6. Tests added and results
+- **No real benchmark data exists.** The entire `src/benchmark/` system is verified foundation only — no Challenger/pro/patch data has been scraped or entered, by explicit instruction. `coaching_session.json`'s benchmark section will read `"unavailable"` for every match until a real source is wired in.
+- **Benchmark metrics are limited to whole-game averages.** Minute-10-specific metrics (`cs_10`, `gold_10`, `deaths_before_10` — the original illustrative example) aren't computable without parsing timeline `participantFrames`, which `timeline_analyzer.py` doesn't currently do and wasn't modified to do (out of scope, protected file). `METRIC_DIRECTIONS` currently only has real support for `cs_per_minute`/`gold_per_minute`/`kill_participation`/`damage_to_objectives`/`vision_score`/`death_count`.
+- **No patch tracking on the player's side.** `analyzer.py` doesn't extract `gameVersion`, so patch-filtered benchmark lookup can't be meaningfully exercised yet; `find_benchmarks()` is called with `patch=None`.
+- **Item recommendation engine isn't in the automatic batch pipeline.** See architecture note above — a real wiring task, not a design flaw.
+- **The AI layer's free-by-default backend (per `ROADMAP.md` §1) still isn't built.** `src/ai/client.py`'s paid Anthropic path is the only backend that exists; it's opt-in, never called automatically by anything, but the *deterministic* backend that should be the actual default hasn't been implemented yet.
+- **Storage is flat JSON, not SQLite** — still a deliberately flagged, still-unresolved decision per the original checkpoint; unchanged this pass.
+- **Knowledge coverage is narrow by design** (5 champions, 2 roles, 4 champions' worth of item knowledge) — see `KNOWLEDGE_SYSTEM_PLAN.md` for the intended incremental-growth strategy (grow from real opponents faced, not exhaustive upfront authoring).
+- **No live game state, no overlay UI, no conversational coaching, no local model backend** — all deliberately deferred; full designs exist in `LIVE_SYSTEM_DESIGN.md` and `UI_DESIGN.md` but nothing in those documents is built.
 
-All 10 test modules are self-contained (`assert`-based, no framework), run with `python -m tests.<module>`, and **all currently pass**:
+## 4. Recommended Next Milestone
 
-| Module | Covers |
-|---|---|
-| `test_riot_client` | region→continent mapping, participant lookup (pure logic only, no network) |
-| `test_analyzer` | stat extraction, `damage_share` team-scoping, `game_start_timestamp` |
-| `test_macro_analyzer` | tier/concern thresholds, knowledge de-prioritization, unknown-champion graceful fallback |
-| `test_knowledge_loader` | markdown section/bullet parsing, case-insensitive lookup, missing-file handling |
-| `test_history_store` | record building, upsert-not-duplicate, missing-history-file handling |
-| `test_history_aggregate` | most-played, per-champion/role averages, repeated weaknesses/strengths, trend comparison |
-| `test_importer` | duplicate-skip (no API call made), multi-match import, per-match failure isolation |
-| `test_profile_generator` | empty/single/multi-game aggregation, champion frequency, win rate |
-| `test_insight_engine` | empty profile, insufficient games, weakness/strength detection, priority ordering (unsorted input) |
-| `test_backfill` | configurable count pass-through, result reporting (imported/skipped/failed), CLI-level setup-error handling — via an injected fake `run_import_fn`, not re-testing `importer`'s own dedup/failure logic |
+Per `ROADMAP.md`, the AI layer's free-by-default backend (`src/ai/backends/deterministic.py` — render `coaching_report.json`-equivalent phrasing directly from knowledge-file text, no API call) was already the recommended next step before this session and still is — it's the smallest remaining gap between "what the architecture promises" (never requires paid API spend) and "what's actually wired as the default." Everything built this session (coaching aggregation, benchmark foundation) sits comfortably alongside it without conflict.
 
-Run everything with:
+A close second, now that `src/coaching/coaching_report.py` exists as the integration point: wiring `item_recommender.py` into `src/history/importer.py`'s automatic per-match run, so `coaching_session.json`'s item-review section stops depending on a separate manual step for every match.
+
+## 5. Tests
+
+All 19 modules are self-contained (assert-based, no framework), run with `python -m tests.<module>`, and **all currently pass**:
+
+`test_riot_client`, `test_analyzer`, `test_timeline_analyzer`, `test_macro_analyzer`, `test_knowledge_loader`, `test_history_store`, `test_history_aggregate`, `test_importer`, `test_profile_generator`, `test_insight_engine`, `test_backfill`, `test_ai_report_generator`, `test_data_dragon`, `test_game_state`, `test_item_loader`, `test_item_recommender`, `test_coaching_report`, `test_benchmark`, `test_benchmark_section`.
+
 ```
-for m in tests.test_riot_client tests.test_analyzer tests.test_macro_analyzer tests.test_knowledge_loader tests.test_history_store tests.test_history_aggregate tests.test_importer tests.test_profile_generator tests.test_insight_engine tests.test_backfill; do
+for m in tests.test_riot_client tests.test_analyzer tests.test_timeline_analyzer tests.test_macro_analyzer tests.test_knowledge_loader tests.test_history_store tests.test_history_aggregate tests.test_importer tests.test_profile_generator tests.test_insight_engine tests.test_backfill tests.test_ai_report_generator tests.test_data_dragon tests.test_game_state tests.test_item_loader tests.test_item_recommender tests.test_coaching_report tests.test_benchmark tests.test_benchmark_section; do
   .venv/Scripts/python.exe -m "$m" || exit 1
 done
 ```
 
-## 7. Current limitations
+## 6. Architectural Decisions That Should Not Be Changed Without Explicit Confirmation
 
-- **Still only 1 real game in history.** `backfill.py` exists and is fully tested, but **has not been run against the live Riot API yet** — that's the immediate next action, not something already done. Until it's run, real `strength_patterns`/`weakness_patterns`/`recent_trends` remain empty/`insufficient_data` (upstream gate requires ≥2 occurrences for a pattern, ≥2 games for a trend).
-- **Four checks are permanently `confidence: "unavailable"`** until match-timeline data is added: `deaths_before_objectives`, `deaths_after_extended_no_recall`, `objective_fight_presence`, `vision_score_vs_enemy_laner`. Riot's match-v5 **timeline** endpoint (`/lol/match/v5/matches/{id}/timeline`) has never been called — only match details.
-- **Benchmarks in `macro_analyzer.py` (`BENCHMARKS` dict) are static and role-agnostic guesses**, not derived from rank/role/champion data. Marked with `ponytail:` comments as a known ceiling.
-- **Knowledge base covers only 5 champions and 2 roles.** A champion without a file degrades gracefully (`champion_context_loaded: false`) but gets no de-prioritization.
-- **Storage is flat JSON (`data/database/game_history.json`), not SQLite**, despite the original architecture phase naming SQLite for local storage. This was a deliberate, flagged deviation (JSON was adequate for personal, low-volume data and avoided premature schema/connection complexity) — **not yet reversed or re-confirmed by the user.**
-- **No AI coaching layer exists.** `player_insights.json` is the last rule-based artifact in the chain; nothing yet turns it into natural-language coaching output.
+Carried forward from the original checkpoint (still true, unchanged this session):
 
-## 8. Recommended next development step
+- **Riot API is the sole source of truth for match data.** Data Dragon is the sole source of truth for static item data. No OP.GG/U.GG/Lolalytics scraping — supplementary only, never foundational, and still not implemented anywhere.
+- **Rule-based analysis and AI coaching are separate layers.** Every fact-finding module must stay deterministic and explainable; the AI layer only phrases already-computed findings, never decides what they are.
+- **Missing data is marked, never fabricated.** `"unavailable"`, `"insufficient_data"`, `null` are load-bearing signals throughout — extended this session to `src/benchmark/` (a metric with no known direction, or no player data, reports `"unavailable"`, never a guessed score) and `src/coaching/` (missing item recommendations, missing benchmark data, both stay honestly absent).
+- **API keys live only in `.env`**, never printed/logged, gitignored.
+- **`game_history.json` upserts by `match_id`**; `src/benchmark/storage.py` and `src/coaching/`'s file lookups follow the same upsert/no-duplication discipline.
+- **Champion/role/item knowledge is qualitative markdown, hand-curated**, not numeric thresholds.
+- **The JSON-vs-SQLite storage choice is still flagged but unresolved.**
+- **New entrypoints wrap existing logic instead of duplicating it** (`backfill.py` calling `importer.run_import()` unchanged is the original example; `src/coaching/coaching_report.py` combining already-computed JSON without re-deriving anything is this session's continuation of the same rule).
 
-1. **Actually run the backfill.** `.venv/Scripts/python.exe -m src.history.backfill --count 20` against the real Riot account (`HelloKittler#meow`) — this is the one remaining action, not a build task. Everything needed for it exists and is tested; it just hasn't been executed against the live API yet. Do this before building anything further on top of insights, since every strength/weakness/trend feature is currently provably correct but has nothing real to show.
-2. **Then build the AI coaching layer** (`src/ai/`, per the original architecture's empty placeholder folder) that consumes `player_insights.json` + `knowledge/*.md` and turns deterministic findings into natural-language coaching text via the Anthropic API (already in `requirements.txt`, unused so far). This was always the end goal; everything built so far exists to feed it clean, evidence-backed input.
+New decisions established this session:
 
-## 9. Architectural decisions that should not be changed without explicit confirmation
-
-- **Riot API is the sole source of truth for match data.** No OP.GG/U.GG/Lolalytics scraping — those were explicitly named as future *supplementary* sources only, never foundational.
-- **Rule-based analysis and AI coaching are separate layers.** Every fact-finding module (analyzer, macro analyzer, aggregation, insights) must stay deterministic and explainable; the AI layer's job (when built) is only to phrase already-computed findings, never to decide what the findings are. Don't let an LLM call creep into `src/analysis/`, `src/history/`, `src/profile/`, or `src/insights/`.
-- **Missing data is marked, never fabricated.** `confidence: "unavailable"`, `"insufficient_data"`, and `null` values are load-bearing signals throughout this pipeline (macro analyzer, trends, insight engine). If the AI coaching layer is built next, it must preserve this — it should refuse to editorialize past what `player_insights.json` actually supports.
-- **API keys live only in `.env`, are never printed/logged**, and `.env` is gitignored. This discipline held through every phase including live-auth testing.
-- **`game_history.json` upserts by `match_id`** — re-processing a match must update its record, never duplicate it. Both `store.record_game` and `importer.import_matches` depend on this.
-- **Champion/role knowledge is qualitative markdown, hand-curated**, not a numeric config — the parser (`src/knowledge/loader.py`) and its consumer (`macro_analyzer.py`'s de-prioritization) are built around parsing prose sections, not structured thresholds. Don't quietly convert this to numeric per-champion benchmarks without deciding that deliberately (it changes the whole `_is_deprioritized` keyword-matching design).
-- **The JSON-vs-SQLite storage choice is flagged but unresolved** (see Limitations) — treat it as a live decision, not a settled one, before building more on top of `data/database/game_history.json`.
-- **New entrypoints wrap existing logic instead of duplicating it.** `backfill.py` is the clearest example: it calls `importer.run_import()` unchanged rather than re-implementing retrieval/dedup/analysis/storage. If another new entrypoint is needed later (e.g. a scheduled re-sync), follow the same pattern — inject the real function as a default parameter (`run_import_fn=run_import`) so the wrapper stays unit-testable without network access, the way `import_matches`' `get_match_fn` and `backfill`'s `run_import_fn` already do.
+- **`GameSnapshot`'s "independent of data source" principle was deliberately reapplied to benchmarks.** `src/benchmark/comparison.py` operates on plain dicts and has no idea whether a benchmark came from a future scraper, a manual entry, or a patch-aggregate import — the same reasoning that made `game_state.py` reusable for a future live-data builder without any downstream changes.
+- **Benchmark comparisons are informational only and must never become coaching priorities.** `src/coaching/priorities.py` never imports `src/coaching/benchmark_section.py` or reads its output. This is enforced by a test (`test_benchmark_gaps_never_become_coaching_priorities`) that asserts `main_lessons`/`next_game_focus` are byte-identical whether or not benchmark data is present — not just a docstring claim.
+- **A metric registry (`METRIC_DIRECTIONS`) is a deliberate, small, code-level scaling ceiling** — the same tradeoff already accepted for `item_recommender.py`'s `TRIGGER_KEYWORDS` (see `ARCHITECTURE_AUDIT.md` Finding E). Adding a new benchmark metric means adding one dict entry, not touching comparison logic.
