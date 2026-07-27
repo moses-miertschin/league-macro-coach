@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from src.history import store
-from src.history.importer import import_matches
+from src.history.importer import enrich_existing_timelines, import_matches
 
 GAME_NAME, TAG_LINE = "HelloKittler", "meow"
 
@@ -246,10 +246,68 @@ def test_timeline_failure_does_not_fail_match_import():
         assert deaths_before["confidence"] == "unavailable"
 
 
+def test_enrich_existing_timelines_backfills_already_imported_match():
+    with _TempPipeline() as pipeline:
+        # simulate a match imported before timeline support existed: an
+        # analysis file on disk (with participant_id, as analyzer.py now
+        # produces) but no timeline and an "unavailable" macro result.
+        analysis = {
+            "match_id": "NA1_OLD",
+            "game_start_timestamp": 1,
+            "participant_id": 1,
+            "champion": "Syndra",
+            "role": "MIDDLE",
+            "win": True,
+            "kda": {"kills": 5, "deaths": 2, "assists": 5},
+            "cs_per_minute": 8.0,
+            "gold_earned": 12000,
+            "damage_to_champions": 15000,
+            "damage_share": 0.3,
+            "objectives_participation": {"kill_participation": 0.6, "damage_to_objectives": 2000},
+            "vision_score": 20,
+            "game_duration_seconds": 1800,
+        }
+        pipeline.reports_dir.mkdir(parents=True, exist_ok=True)
+        with open(pipeline.reports_dir / "NA1_OLD_analysis.json", "w", encoding="utf-8") as f:
+            json.dump(analysis, f)
+        stale_macro = {"match_id": "NA1_OLD", "detected_patterns": [], "possible_improvement_areas": [], "confidence_level": "partial", "champion_context_loaded": False, "role_context_loaded": False}
+        with open(pipeline.reports_dir / "NA1_OLD_macro_patterns.json", "w", encoding="utf-8") as f:
+            json.dump(stale_macro, f)
+        store.record_game(analysis, stale_macro, path=pipeline.history_path)
+
+        def get_timeline_fn(match_id):
+            return _make_timeline(match_id)
+
+        result = enrich_existing_timelines(
+            get_timeline_fn,
+            reports_dir=pipeline.reports_dir,
+            timelines_dir=pipeline.timelines_dir,
+            history_path=pipeline.history_path,
+        )
+
+        assert result["enriched"] == ["NA1_OLD"]
+        assert result["failed"] == []
+        assert (pipeline.timelines_dir / "NA1_OLD_timeline.json").exists()
+
+        with open(pipeline.reports_dir / "NA1_OLD_macro_patterns.json", encoding="utf-8") as f:
+            macro_result = json.load(f)
+        deaths_before = next(
+            p for p in macro_result["detected_patterns"] if p["pattern"] == "deaths_before_objectives"
+        )
+        assert deaths_before["confidence"] == "high"
+        assert deaths_before["value"] == 1
+
+        history = store.load_history(pipeline.history_path)
+        assert len(history) == 1  # upserted, not duplicated
+        history_patterns = {p["pattern"]: p["value"] for p in history[0]["detected_patterns"]}
+        assert history_patterns["deaths_before_objectives"] == 1
+
+
 if __name__ == "__main__":
     test_duplicate_match_handling()
     test_multiple_match_import()
     test_failed_api_response_handling()
     test_timeline_is_fetched_saved_and_used()
     test_timeline_failure_does_not_fail_match_import()
+    test_enrich_existing_timelines_backfills_already_imported_match()
     print("All checks passed.")

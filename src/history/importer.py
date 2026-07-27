@@ -120,6 +120,63 @@ def import_matches(
     return result
 
 
+def enrich_existing_timelines(
+    get_timeline_fn,
+    reports_dir: Path = REPORTS_DIR,
+    timelines_dir: Path = TIMELINES_DIR,
+    history_path: Path = store.HISTORY_PATH,
+) -> dict:
+    """Fetch timelines for matches already imported before timeline support
+    existed, and refresh their macro patterns + history record in place.
+
+    import_matches() intentionally skips anything already in game history,
+    so it can't be used to backfill timelines onto old matches — this walks
+    the analysis files already on disk instead, reusing the same
+    _load_or_fetch_timeline/macro_analyze/store.record_game path.
+    """
+    result = {"enriched": [], "timeline_unavailable": [], "failed": []}
+
+    for analysis_path in sorted(reports_dir.glob("*_analysis.json")):
+        match_id = analysis_path.stem.removesuffix("_analysis")
+        try:
+            with open(analysis_path, encoding="utf-8") as f:
+                analysis = json.load(f)
+
+            timeline_result = _load_or_fetch_timeline(
+                match_id, get_timeline_fn, timelines_dir, analysis["participant_id"]
+            )
+            if timeline_result is None:
+                result["timeline_unavailable"].append(match_id)
+
+            macro_result = macro_analyze(analysis, timeline_result)
+            _save_json(reports_dir / f"{match_id}_macro_patterns.json", macro_result)
+
+            store.record_game(analysis, macro_result, path=history_path)
+            result["enriched"].append(match_id)
+        except Exception as exc:
+            result["failed"].append({"match_id": match_id, "error": str(exc)})
+
+    return result
+
+
+def run_timeline_enrichment() -> dict:
+    load_dotenv(PROJECT_ROOT / ".env")
+    api_key = os.getenv("RIOT_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "RIOT_API_KEY is not set. Copy .env.example to .env and fill it in."
+        )
+
+    with open(PROFILE_PATH, encoding="utf-8") as f:
+        profile = json.load(f)
+    continent = region_to_continent(profile["region"])
+
+    def get_timeline_fn(match_id):
+        return get_match_timeline(api_key, continent, match_id)
+
+    return enrich_existing_timelines(get_timeline_fn)
+
+
 def run_import(count: int = 10) -> dict:
     load_dotenv(PROJECT_ROOT / ".env")
     api_key = os.getenv("RIOT_API_KEY")
@@ -155,6 +212,17 @@ def main() -> None:
             f"Timeline unavailable for {len(result['timeline_unavailable'])} match(es) "
             "(imported without timeline-based patterns)."
         )
+    if result["failed"]:
+        print(f"Failed {len(result['failed'])} match(es):")
+        for failure in result["failed"]:
+            print(f"  {failure['match_id']}: {failure['error']}")
+
+
+def enrich_main() -> None:
+    result = run_timeline_enrichment()
+    print(f"Enriched {len(result['enriched'])} match(es) with timeline data.")
+    if result["timeline_unavailable"]:
+        print(f"Timeline unavailable for {len(result['timeline_unavailable'])} match(es).")
     if result["failed"]:
         print(f"Failed {len(result['failed'])} match(es):")
         for failure in result["failed"]:
