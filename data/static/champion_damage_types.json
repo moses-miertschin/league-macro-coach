@@ -1,0 +1,33 @@
+{
+  "_comment": "Hand-curated per-champion classification for the item recommendation engine. A champion absent from this table is 'unknown' and is never guessed at from Data Dragon tags -- add entries here as they come up against real opponents rather than inferring them.",
+
+  "Syndra": {"damage_type": "magic"},
+  "Yone": {"damage_type": "hybrid"},
+  "Akali": {"damage_type": "magic"},
+  "Fizz": {"damage_type": "magic"},
+  "Zoe": {"damage_type": "magic"},
+
+  "Mordekaiser": {"damage_type": "hybrid"},
+  "MasterYi": {"damage_type": "physical"},
+  "Caitlyn": {"damage_type": "physical"},
+  "Pyke": {"damage_type": "physical"},
+
+  "Lissandra": {"damage_type": "magic"},
+  "Zed": {"damage_type": "physical"},
+  "Ahri": {"damage_type": "magic"},
+  "Lux": {"damage_type": "magic"},
+  "Annie": {"damage_type": "magic"},
+  "Xerath": {"damage_type": "magic"},
+  "Karma": {"damage_type": "magic"},
+  "Vladimir": {"damage_type": "magic"},
+
+  "Malphite": {"damage_type": "magic"},
+  "Darius": {"damage_type": "physical"},
+  "Garen": {"damage_type": "physical"},
+  "Jinx": {"damage_type": "physical"},
+  "Vayne": {"damage_type": "physical"},
+  "Ashe": {"damage_type": "physical"},
+  "Warwick": {"damage_type": "physical", "sustain": true},
+  "Soraka": {"damage_type": "magic", "sustain": true},
+  "Vindicta": {"damage_type": "physical"}
+}

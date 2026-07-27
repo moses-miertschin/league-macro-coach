@@ -1,8 +1,10 @@
 # LeagueMacroCoach
 
-A private, personal League of Legends macro coaching system. It retrieves ranked
-match data, analyzes recurring macro mistakes, and generates personalized
-improvement goals using an AI model grounded in a hand-curated knowledge base.
+A private, personal League of Legends coaching system. It retrieves ranked
+match data, analyzes recurring macro mistakes, generates evidence-backed item
+recommendations, and produces personalized improvement goals — all
+rule-based and deterministic, with an optional (not required) AI-phrasing
+layer grounded in a hand-curated knowledge base.
 
 This is a solo, local tool — not a public service. Match data and generated
 reports stay on disk and out of version control (see `.gitignore`).
@@ -12,57 +14,105 @@ reports stay on disk and out of version control (see `.gitignore`).
 - Riot ID: `HelloKittler#meow`
 - Region: NA
 - Role: Mid
-- Champion pool: Yone, Akali, Fizz, learning Syndra
+- Champion pool: Yone, Akali, Fizz, Syndra
 
 ## Architecture
 
 ```
-Riot API ─▶ src/riot/ ─▶ data/raw_matches/, data/database/
+Riot API ──▶ src/riot/client.py ──▶ data/raw_matches/, data/raw_matches/timelines/
+Data Dragon ─▶ src/riot/data_dragon.py ─▶ data/static/ (cached item catalog)
                               │
                               ▼
-                        src/analysis/
-                (flags macro mistakes per game)
+              src/analysis/analyzer.py, timeline_analyzer.py
+                (structured per-game + per-event stats)
                               │
-              knowledge/*.md ◀┤ (relevant snippets pulled by tag)
+              knowledge/champions/, knowledge/roles/ ◀┤ (src/knowledge/loader.py)
                               ▼
-                          src/ai/
-                (Claude generates the coaching report)
+                  src/analysis/macro_analyzer.py
+                (rule-based macro pattern flags)
                               │
                               ▼
-                reports/generated_reports/
+          src/history/store.py → data/database/game_history.json
+                              │
+                              ▼
+       src/history/aggregate.py → src/profile/generator.py
+                              │
+                              ▼
+                  src/insights/engine.py → player_insights.json
+                              │
+                              ▼
+          src/ai/ (optional, opt-in phrasing layer — not required to use this tool)
+
+                     ── a second, independent pipeline ──
+
+              src/analysis/game_state.py (GameSnapshot, source-agnostic)
+                              │
+              knowledge/items/ ◀┤ (src/knowledge/item_loader.py)
+                              ▼
+              src/analysis/item_recommender.py
+        (rule-based, explainable item recommendations — no ML, no AI)
 ```
 
-**Riot API is the source of truth for match data.** The `src/` layout keeps
-Riot-specific code isolated in `src/riot/` so that additional external
-sources (OP.GG, U.GG, Lolalytics, patch notes, high-elo reference data) can
-be added later as their own modules without touching the Riot integration or
+**Riot API is the source of truth for match data.** Data Dragon (Riot's
+static per-patch data CDN) is the source of truth for item costs/tags/build
+paths — no API key, no rate limits. The `src/` layout keeps Riot-specific
+code isolated in `src/riot/` so additional external sources (OP.GG, U.GG,
+Lolalytics, patch notes) can be added later as their own modules without
 becoming the foundation the system depends on. None of those sources are
-implemented yet.
+implemented, and none are required.
+
+**Every recommendation is deterministic and explainable.** Detected macro
+patterns and item recommendations both trace back to a named rule and, for
+items, a full evidence + confidence-score breakdown — nothing is generated
+by a model. The one optional AI layer (`src/ai/`) only phrases
+already-computed findings from `player_insights.json`; it never decides what
+the findings are, and the tool is fully usable without it. See
+`ARCHITECTURE_AUDIT.md` for the full data-flow breakdown.
 
 ## Folder Structure
 
-- `data/raw_matches/` — raw match JSON pulled from the Riot API.
-- `data/database/` — local SQLite database file(s) once storage logic exists.
-- `knowledge/fundamentals/` — general mid lane macro concepts.
-- `knowledge/champions/` — champion-specific notes (Yone, Akali, Fizz, Syndra).
-- `knowledge/matchups/` — matchup-specific notes.
-- `knowledge/coaching_philosophy.md` — principles the AI coach follows when writing feedback.
-- `reports/generated_reports/` — generated coaching reports, one per session/game.
-- `src/riot/` — Riot API integration (not yet implemented).
-- `src/analysis/` — heuristics that detect macro mistakes from match data (not yet implemented).
-- `src/ai/` — builds prompts and calls Claude to generate reports (not yet implemented).
-- `src/main.py` — CLI entrypoint; currently a placeholder.
+- `data/raw_matches/` — raw match + timeline JSON pulled from the Riot API.
+- `data/database/` — `game_history.json`, one upserted record per game.
+- `data/static/` — cached Data Dragon item data + hand-curated champion damage-type classifications.
+- `knowledge/fundamentals/` — general macro concepts (not yet populated).
+- `knowledge/champions/` — champion-specific coaching notes (Yone, Akali, Fizz, Syndra, Pyke).
+- `knowledge/roles/` — role-level coaching notes (Mid, Support).
+- `knowledge/items/` — champion-specific + general item-recommendation knowledge.
+- `knowledge/matchups/` — matchup-specific notes (not yet populated — see `KNOWLEDGE_SYSTEM_PLAN.md`).
+- `knowledge/coaching_philosophy.md` — principles the (optional) AI layer follows when phrasing feedback.
+- `reports/generated_reports/` — generated analysis, macro patterns, insights, and item recommendations, one set per match.
+- `src/riot/` — Riot API client + Data Dragon static-data client.
+- `src/analysis/` — structured extraction and rule-based analysis (macro patterns, timeline facts, item recommendations).
+- `src/history/`, `src/profile/`, `src/insights/` — persistence, cross-game aggregation, and insight generation.
+- `src/knowledge/` — markdown knowledge-file parsers.
+- `src/ai/` — optional, opt-in prompt/validation/report layer (not required to use the rest of the tool).
+- `src/main.py` — original Phase-1 bootstrap script, superseded by `src/history/importer.py`/`backfill.py` — see `ARCHITECTURE_AUDIT.md` Finding A.
 - `.env.example` — template for required secrets/config; copy to `.env` (gitignored).
-- `requirements.txt` — planned dependencies for upcoming phases.
+- `requirements.txt` — runtime dependencies.
 
 ## Status
 
-Foundation only. No Riot API connection, no database logic, no AI calls yet.
+Rule-based pipeline complete and exercised against 20 real ranked games:
+Riot match + timeline retrieval, macro pattern analysis, cross-game
+aggregation, player insights, and a deterministic item recommendation
+engine are all built, tested, and validated against real match data. The AI
+phrasing layer exists but is opt-in only. See `CHECKPOINT.md` for full
+build history and `ARCHITECTURE_AUDIT.md` / `ROADMAP.md` for current
+architecture and what's next.
+
+## Planning & Audit Documents
+
+- `CHECKPOINT.md` — build history and architectural decisions.
+- `ROADMAP.md` — phased development plan (AI backend redesign, item engine, live game state, UI).
+- `ARCHITECTURE_AUDIT.md` — full module inventory, data flow, and identified findings.
+- `TEST_AUDIT.md` — test coverage review and recommended future tests.
+- `KNOWLEDGE_SYSTEM_PLAN.md` — how champion/item/matchup knowledge should scale.
+- `LIVE_SYSTEM_DESIGN.md` — design for the future live game-state coaching system.
+- `UI_DESIGN.md` — design for the future desktop/overlay interface.
+- `PATCH_SYSTEM.md` — how the system handles League's per-patch changes.
 
 ## Next Milestone
 
-Implement `src/riot/` enough to authenticate with the Riot API, fetch
-`HelloKittler#meow`'s most recent ranked match, save the raw JSON to
-`data/raw_matches/`, and print basic stats (champion, KDA, CS, result) to
-the console. This validates API auth and data shape before anything else is
-built on top of it.
+See `ROADMAP.md` — the AI layer's free-by-default backend (deterministic
+report rendering, no required paid API calls) is the recommended next step,
+ahead of live game-state work.

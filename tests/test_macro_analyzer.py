@@ -83,6 +83,20 @@ def test_missing_champion_knowledge_does_not_crash():
     assert result["role_context_loaded"] is True
 
 
+def test_missing_role_does_not_crash():
+    # regression test: TEST_AUDIT.md's first draft mis-flagged this as a
+    # crash risk (load_role(None).lower() failing). Re-checking the source
+    # showed macro_analyze() already guards this — `if analysis.get("role")`
+    # — so this test locks in the existing safe behavior, not a fix.
+    no_role_game = dict(WEAK_GAME)
+    no_role_game["champion"] = "SomeFutureChampion"
+    no_role_game["role"] = None
+
+    result = macro_analyze(no_role_game)
+    assert result["champion_context_loaded"] is False
+    assert result["role_context_loaded"] is False
+
+
 def test_timeline_enrichment_fills_previously_unavailable_patterns():
     timeline_result = {
         "death_timestamps_ms": [100000, 200000],
@@ -157,6 +171,7 @@ if __name__ == "__main__":
     test_strong_game_has_no_concerns()
     test_deprioritized_metric_not_flagged_for_pyke()
     test_missing_champion_knowledge_does_not_crash()
+    test_missing_role_does_not_crash()
     test_timeline_enrichment_fills_previously_unavailable_patterns()
     test_without_timeline_result_still_marks_unavailable()
     print("All checks passed.")
