@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Secrets
+.env
+
+# Match data — private, regenerable via Riot API
+data/raw_matches/*
+!data/raw_matches/.gitkeep
+data/database/*
+!data/database/.gitkeep
+
+# Generated reports — private, regenerable
+reports/generated_reports/*
+!reports/generated_reports/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
