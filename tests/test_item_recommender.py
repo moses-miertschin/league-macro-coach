@@ -5,7 +5,7 @@ table) -- no dependency on real match data, real knowledge files, or the
 network. Run with: python -m tests.test_item_recommender
 """
 
-from src.analysis.item_recommender import recommend_items
+from src.analysis.item_recommender import generate_item_recommendations, recommend_items
 
 DAMAGE_TYPES = {
     "Syndra": {"damage_type": "magic"},
@@ -199,6 +199,44 @@ def test_save_gold_when_nothing_is_affordable():
     assert all(r["purchasable_now"] is not True for r in result["recommendations"])
 
 
+def test_generate_item_recommendations_wires_real_pipeline_together():
+    # generate_item_recommendations()'s whole job is composing
+    # build_snapshot_from_match() + load_champion_items()/load_general_items()
+    # + recommend_items() -- proving that wiring needs a real match dict and
+    # the real knowledge/items/syndra.md file, not synthetic fixtures for
+    # every dependency (recommend_items() itself is already covered above).
+    match = {
+        "metadata": {"matchId": "NA1_WIRING_TEST"},
+        "info": {
+            "gameDuration": 1500,
+            "participants": [
+                {"riotIdGameName": "HelloKittler", "riotIdTagline": "meow", "championName": "Syndra",
+                 "teamPosition": "MIDDLE", "teamId": 100, "participantId": 1, "champLevel": 11,
+                 "kills": 4, "deaths": 5, "assists": 3, "goldEarned": 8000,
+                 "item0": 0, "item1": 0, "item2": 0, "item3": 0, "item4": 0, "item5": 0, "item6": 0},
+                {"riotIdGameName": "Enemy", "riotIdTagline": "0000", "championName": "Zed",
+                 "teamPosition": "MIDDLE", "teamId": 200, "participantId": 2, "champLevel": 12,
+                 "kills": 8, "deaths": 1, "assists": 2, "goldEarned": 11000,
+                 "item0": 0, "item1": 0, "item2": 0, "item3": 0, "item4": 0, "item5": 0, "item6": 0},
+            ],
+            "teams": [
+                {"teamId": 100, "objectives": {"dragon": {"kills": 0}, "baron": {"kills": 0}, "tower": {"kills": 2}}},
+                {"teamId": 200, "objectives": {"dragon": {"kills": 2}, "baron": {"kills": 0}, "tower": {"kills": 5}}},
+            ],
+        },
+    }
+    catalog = _catalog({
+        "1": ("Liandry's Torment", 3000, []),
+        "2": ("Sorcerer's Shoes", 1100, []),
+    })
+
+    result = generate_item_recommendations(match, "HelloKittler", "meow", catalog, {"Zed": {"damage_type": "physical"}})
+
+    assert result["champion"] == "Syndra"
+    item_names = {r["item"] for r in result["recommendations"]}
+    assert "Liandry's Torment" in item_names  # Syndra's real core_build, from the real knowledge file
+
+
 if __name__ == "__main__":
     test_trigger_matching_and_confidence_scoring()
     test_stacked_triggers_and_self_conflict_are_both_scored()
@@ -209,4 +247,5 @@ if __name__ == "__main__":
     test_ranking_and_recommendation_type_assignment()
     test_component_fallback_when_full_item_unaffordable()
     test_save_gold_when_nothing_is_affordable()
+    test_generate_item_recommendations_wires_real_pipeline_together()
     print("All checks passed.")

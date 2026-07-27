@@ -28,6 +28,7 @@ def _make_match(match_id: str, kills: int) -> dict:
                     "teamPosition": "MIDDLE",
                     "teamId": 100,
                     "participantId": 1,
+                    "champLevel": 11,
                     "win": True,
                     "kills": kills,
                     "deaths": 2,
@@ -43,6 +44,43 @@ def _make_match(match_id: str, kills: int) -> dict:
             ],
         },
     }
+
+
+def _make_match_with_enemy(match_id: str, kills: int) -> dict:
+    """Extends _make_match() with a second (enemy) participant and team
+    objectives -- build_snapshot_from_match() (used by the new item-
+    recommendation wiring) needs an enemy roster + info["teams"], which the
+    base fixture alone doesn't provide.
+    """
+    match = _make_match(match_id, kills)
+    match["info"]["participants"].append({
+        "riotIdGameName": "Enemy", "riotIdTagline": "0000",
+        "championName": "Ahri", "teamPosition": "MIDDLE", "teamId": 200,
+        "participantId": 2, "champLevel": 11, "win": False,
+        "kills": 3, "deaths": 3, "assists": 2,
+        "totalMinionsKilled": 140, "neutralMinionsKilled": 5,
+        "goldEarned": 9000, "totalDamageDealtToChampions": 15000,
+        "damageDealtToObjectives": 800, "visionScore": 18,
+        "challenges": {"killParticipation": 0.4},
+        "item0": 0, "item1": 0, "item2": 0, "item3": 0, "item4": 0, "item5": 0, "item6": 0,
+    })
+    match["info"]["teams"] = [
+        {"teamId": 100, "objectives": {"dragon": {"kills": 1}, "baron": {"kills": 0}, "tower": {"kills": 3}}},
+        {"teamId": 200, "objectives": {"dragon": {"kills": 1}, "baron": {"kills": 0}, "tower": {"kills": 2}}},
+    ]
+    return match
+
+
+FAKE_ITEM_CATALOG = {
+    "version": "test",
+    "items_by_id": {},
+    "items_by_name": {
+        # matches knowledge/items/syndra.md's real core_build entries
+        "liandry's torment": {"id": "1", "name": "Liandry's Torment", "cost": 3000, "tags": [], "from": []},
+        "sorcerer's shoes": {"id": "2", "name": "Sorcerer's Shoes", "cost": 1100, "tags": [], "from": []},
+    },
+}
+FAKE_DAMAGE_TYPE_TABLE = {"Ahri": {"damage_type": "magic"}}
 
 
 def _make_timeline(match_id: str, participant_id: int = 1) -> dict:
@@ -246,6 +284,86 @@ def test_timeline_failure_does_not_fail_match_import():
         assert deaths_before["confidence"] == "unavailable"
 
 
+def test_item_recommendations_generated_during_import():
+    with _TempPipeline() as pipeline:
+        def get_match_fn(match_id):
+            return _make_match_with_enemy(match_id, kills=5)
+
+        result = import_matches(
+            ["NA1_WITH_ITEMS"],
+            get_match_fn,
+            GAME_NAME,
+            TAG_LINE,
+            raw_matches_dir=pipeline.raw_dir,
+            reports_dir=pipeline.reports_dir,
+            history_path=pipeline.history_path,
+            item_catalog=FAKE_ITEM_CATALOG,
+            damage_type_table=FAKE_DAMAGE_TYPE_TABLE,
+        )
+
+        assert result["imported"] == ["NA1_WITH_ITEMS"]
+        assert result["item_recommendations_unavailable"] == []
+
+        item_path = pipeline.reports_dir / "NA1_WITH_ITEMS_item_recommendations.json"
+        assert item_path.exists()
+        with open(item_path, encoding="utf-8") as f:
+            item_result = json.load(f)
+        assert item_result["champion"] == "Syndra"
+        item_names = {r["item"] for r in item_result["recommendations"]}
+        assert "Liandry's Torment" in item_names or "Sorcerer's Shoes" in item_names
+
+
+def test_item_recommendations_unavailable_when_catalog_not_provided():
+    # default behavior (item_catalog/damage_type_table omitted) must stay
+    # exactly as it was before this feature existed -- skip, not crash.
+    with _TempPipeline() as pipeline:
+        def get_match_fn(match_id):
+            return _make_match(match_id, kills=5)
+
+        result = import_matches(
+            ["NA1_NO_ITEMS"],
+            get_match_fn,
+            GAME_NAME,
+            TAG_LINE,
+            raw_matches_dir=pipeline.raw_dir,
+            reports_dir=pipeline.reports_dir,
+            history_path=pipeline.history_path,
+        )
+
+        assert result["imported"] == ["NA1_NO_ITEMS"]
+        assert result["item_recommendations_unavailable"] == ["NA1_NO_ITEMS"]
+        assert not (pipeline.reports_dir / "NA1_NO_ITEMS_item_recommendations.json").exists()
+
+
+def test_item_recommendation_failure_does_not_fail_match_import():
+    # _make_match() (no enemy/teams data) will make
+    # generate_item_recommendations() raise inside build_snapshot_from_match --
+    # the match itself must still import successfully, same isolation
+    # already proven for timeline failures.
+    with _TempPipeline() as pipeline:
+        def get_match_fn(match_id):
+            return _make_match(match_id, kills=5)
+
+        result = import_matches(
+            ["NA1_BAD_SNAPSHOT"],
+            get_match_fn,
+            GAME_NAME,
+            TAG_LINE,
+            raw_matches_dir=pipeline.raw_dir,
+            reports_dir=pipeline.reports_dir,
+            history_path=pipeline.history_path,
+            item_catalog=FAKE_ITEM_CATALOG,
+            damage_type_table=FAKE_DAMAGE_TYPE_TABLE,
+        )
+
+        assert result["imported"] == ["NA1_BAD_SNAPSHOT"]
+        assert result["failed"] == []
+        assert result["item_recommendations_unavailable"] == ["NA1_BAD_SNAPSHOT"]
+
+        history = store.load_history(pipeline.history_path)
+        assert {g["match_id"] for g in history} == {"NA1_BAD_SNAPSHOT"}
+
+
 def test_enrich_existing_timelines_backfills_already_imported_match():
     with _TempPipeline() as pipeline:
         # simulate a match imported before timeline support existed: an
@@ -309,5 +427,8 @@ if __name__ == "__main__":
     test_failed_api_response_handling()
     test_timeline_is_fetched_saved_and_used()
     test_timeline_failure_does_not_fail_match_import()
+    test_item_recommendations_generated_during_import()
+    test_item_recommendations_unavailable_when_catalog_not_provided()
+    test_item_recommendation_failure_does_not_fail_match_import()
     test_enrich_existing_timelines_backfills_already_imported_match()
     print("All checks passed.")

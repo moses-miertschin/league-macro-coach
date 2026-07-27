@@ -283,6 +283,25 @@ def recommend_items(snapshot: dict, champion_knowledge: dict, general_knowledge:
     }
 
 
+def generate_item_recommendations(
+    match: dict, game_name: str, tag_line: str, item_catalog: dict, damage_type_table: dict
+) -> dict:
+    """Composes GameSnapshot construction + knowledge loading + recommend_items
+    into one callable.
+
+    This is the seam src/history/importer.py calls to produce item
+    recommendations as part of normal match processing -- importer.py
+    contains no item-recommendation logic itself, it just calls this and
+    saves the result, the same way it already calls analyze_match()/
+    macro_analyze() from their own modules. main() below calls this too, so
+    the composition exists in exactly one place.
+    """
+    snapshot = build_snapshot_from_match(match, game_name, tag_line)
+    champion_knowledge = load_champion_items(snapshot["champion"])
+    general_knowledge = load_general_items()
+    return recommend_items(snapshot, champion_knowledge, general_knowledge, item_catalog, damage_type_table)
+
+
 def main() -> None:
     with open(PROFILE_PATH, encoding="utf-8") as f:
         profile = json.load(f)
@@ -292,13 +311,10 @@ def main() -> None:
     with open(match_path, encoding="utf-8") as f:
         match = json.load(f)
 
-    snapshot = build_snapshot_from_match(match, game_name, tag_line)
-    champion_knowledge = load_champion_items(snapshot["champion"])
-    general_knowledge = load_general_items()
     item_catalog = load_item_catalog()
     damage_type_table = load_damage_type_table()
 
-    result = recommend_items(snapshot, champion_knowledge, general_knowledge, item_catalog, damage_type_table)
+    result = generate_item_recommendations(match, game_name, tag_line, item_catalog, damage_type_table)
 
     match_id = match["metadata"]["matchId"]
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)

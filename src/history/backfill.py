@@ -33,6 +33,8 @@ def _print_summary(result: dict) -> None:
             f"  {len(result['timeline_unavailable'])} imported without timeline data "
             "(not available for that match)."
         )
+    if result.get("item_recommendations_unavailable"):
+        print(f"  {len(result['item_recommendations_unavailable'])} imported without item recommendations.")
     if result["failed"]:
         print(f"  {len(result['failed'])} failed to retrieve:")
         for failure in result["failed"]:
