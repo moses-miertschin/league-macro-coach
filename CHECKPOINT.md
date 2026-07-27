@@ -2,6 +2,8 @@
 
 Handoff summary for continuing development. Everything below reflects the state of the repo as of this checkpoint: a complete rule-based coaching pipeline — match retrieval through structured player insights, timeline enrichment, a deterministic item recommendation engine, a cross-pipeline coaching-session aggregator, and a benchmark-comparison foundation — plus one clearly-optional AI phrasing layer. **No part of the tool requires a paid API to function.** This supersedes the original checkpoint's "what's built" and "what's next" sections; those phases are complete and summarized below rather than repeated in full (see git history for the turn-by-turn build order).
 
+**Strategic pivot (this checkpoint):** the project's primary goal is no longer AI coaching — it's a deterministic League intelligence system (live recommendations, drafting assistance, itemization, rune decisions, matchup analysis, a future overlay UI), with AI now formally an optional explanation layer project-wide, never the decision-maker. See the revised `ROADMAP.md` and new `RECOMMENDATION_SYSTEM_DESIGN.md`. Nothing already built changes meaning or behavior because of this pivot — it's additive, and the "AI never decides" rule it formalizes was already true for everything in this repo.
+
 Player profile (`data/player_profile.json`): Riot ID `HelloKittler#meow`, NA, Mid, champion pool Yone/Akali/Fizz/Syndra. **20 real ranked games are in `data/database/game_history.json`**, all with timeline data enriched (deaths-before-objectives, objective-fight-presence are real numbers, not `"unavailable"`, for all 20).
 
 ## 1. What's built
@@ -37,7 +39,11 @@ Player profile (`data/player_profile.json`): Riot ID `HelloKittler#meow`, NA, Mi
 20. **No real benchmark data exists anywhere in the repo.** `data/benchmarks/` isn't even created yet. No scraping, no AI-sourced numbers — this is 100% foundation, verified only with synthetic test fixtures.
 
 **Architecture/planning documentation (complete):**
-21. `ROADMAP.md`, `ARCHITECTURE_AUDIT.md`, `TEST_AUDIT.md`, `KNOWLEDGE_SYSTEM_PLAN.md`, `LIVE_SYSTEM_DESIGN.md`, `UI_DESIGN.md`, `PATCH_SYSTEM.md` — a full engineering review and forward design pass covering everything not yet built (live game state, overlay UI, knowledge scaling, patch handling).
+21. `ROADMAP.md`, `ARCHITECTURE_AUDIT.md`, `TEST_AUDIT.md`, `KNOWLEDGE_SYSTEM_PLAN.md`, `LIVE_SYSTEM_DESIGN.md`, `UI_DESIGN.md`, `PATCH_SYSTEM.md` — a full engineering review and forward design pass covering everything not yet built (live game state, overlay UI, knowledge scaling, patch handling). `ROADMAP.md` was revised this checkpoint for the deterministic-intelligence-system pivot (below); `RECOMMENDATION_SYSTEM_DESIGN.md` is new.
+
+**Shared recommendation contract (foundation only, no migration yet):**
+22. `src/recommendations/schema.py` — the shared shape every future recommendation-producing system (item, draft, rune, live, macro) will eventually emit: `system`/`category`/`subject`/`recommendation`/`reason`/`evidence`/`confidence`/`confidence_score`/`severity`/`priority`/`source`/`details`. Two deliberately separate axes — `confidence` (data quality) and `severity` (impact/urgency) — replace the three previously-incompatible confidence vocabularies `ARCHITECTURE_AUDIT.md` Finding C flagged. `validate_recommendation(entry) -> list[str]` follows the exact convention `benchmark_schema.py`'s `validate_benchmark_entry()` already established. **`recommendation`/`confidence_score` may be `null`, and `confidence`/`severity` may be `"unavailable"` — this is a valid, expected state, never rejected.** `details` stays permissive of arbitrary domain-specific keys, same precedent as benchmark entries.
+23. **Nothing produces this shape yet.** `item_recommender.py`'s `recommend_items()` and `coaching/priorities.py`'s lessons are completely untouched — per `RECOMMENDATION_SYSTEM_DESIGN.md`'s two-stage migration plan, an adapter function (Stage 1, additive, zero risk to existing consumers) is the next step for those, not a rewrite. Not built this checkpoint — schema and validator only, as scoped.
 
 ## 2. Current Architecture
 
@@ -104,21 +110,25 @@ Two things worth being precise about, since they're easy to conflate:
 - **Storage is flat JSON, not SQLite** — still a deliberately flagged, still-unresolved decision per the original checkpoint; unchanged this pass.
 - **Knowledge coverage is narrow by design** (5 champions, 2 roles, 4 champions' worth of item knowledge) — see `KNOWLEDGE_SYSTEM_PLAN.md` for the intended incremental-growth strategy (grow from real opponents faced, not exhaustive upfront authoring).
 - **No live game state, no overlay UI, no conversational coaching, no local model backend** — all deliberately deferred; full designs exist in `LIVE_SYSTEM_DESIGN.md` and `UI_DESIGN.md` but nothing in those documents is built.
+- **No draft or rune system exists.** `src/draft/`, `knowledge/runes/`, `knowledge/drafting/`, and the LCU API client are all still design-only (`ROADMAP.md` §2–4).
+- **The shared recommendation schema has zero adopters.** `src/recommendations/schema.py` exists and is fully tested, but no system (item, macro, or otherwise) actually emits this shape yet — see the architectural decision above on why that's deliberate, not an oversight.
 
 ## 4. Recommended Next Milestone
 
-Per `ROADMAP.md`, the AI layer's free-by-default backend (`src/ai/backends/deterministic.py` — render `coaching_report.json`-equivalent phrasing directly from knowledge-file text, no API call) remains the recommended next step — it's the smallest remaining gap between "what the architecture promises" (never requires paid API spend) and "what's actually wired as the default." Everything built through this checkpoint (coaching aggregation, benchmark foundation, item recommendations now in the automatic import flow) sits comfortably alongside it without conflict.
+Per the revised `ROADMAP.md`, the recommended path is now: (1) write the Stage-1 adapter functions (`adapt_item_recommendation()`, `adapt_macro_lesson()`) that translate `item_recommender.py`'s and `coaching/priorities.py`'s existing output into `src/recommendations/schema.py`'s shape — purely additive, proves the schema against two real systems before anything new is built against it; then (2) the shared polling/runtime infrastructure `ROADMAP.md` §1 identifies as the actual prerequisite for `src/draft/`/`src/live/`, neither of which is started yet (explicitly out of scope for this checkpoint, per instruction).
 
-A secondary candidate now that item recommendations flow automatically: backfilling item recommendations onto the 20 already-imported games (an `enrich_existing_item_recommendations()` mirroring `enrich_existing_timelines()`'s existing pattern), so historical matches don't need re-import to benefit. Not built this checkpoint — scoped out as a distinct feature, not part of this integration.
+The AI layer's free-by-default backend (`src/ai/backends/deterministic.py`) is no longer the top priority given the pivot — de-prioritized, not abandoned, since nothing in the pipeline calls the paid backend automatically anyway.
+
+Also still open: backfilling item recommendations onto the 20 already-imported games (`enrich_existing_item_recommendations()`, mirroring `enrich_existing_timelines()`) — unchanged from the prior checkpoint, still not built.
 
 ## 5. Tests
 
-All 19 modules are self-contained (assert-based, no framework), run with `python -m tests.<module>`, and **all currently pass**:
+All 20 modules are self-contained (assert-based, no framework), run with `python -m tests.<module>`, and **all currently pass**:
 
-`test_riot_client`, `test_analyzer`, `test_timeline_analyzer`, `test_macro_analyzer`, `test_knowledge_loader`, `test_history_store`, `test_history_aggregate`, `test_importer`, `test_profile_generator`, `test_insight_engine`, `test_backfill`, `test_ai_report_generator`, `test_data_dragon`, `test_game_state`, `test_item_loader`, `test_item_recommender`, `test_coaching_report`, `test_benchmark`, `test_benchmark_section`.
+`test_riot_client`, `test_analyzer`, `test_timeline_analyzer`, `test_macro_analyzer`, `test_knowledge_loader`, `test_history_store`, `test_history_aggregate`, `test_importer`, `test_profile_generator`, `test_insight_engine`, `test_backfill`, `test_ai_report_generator`, `test_data_dragon`, `test_game_state`, `test_item_loader`, `test_item_recommender`, `test_coaching_report`, `test_benchmark`, `test_benchmark_section`, `test_recommendation_schema`.
 
 ```
-for m in tests.test_riot_client tests.test_analyzer tests.test_timeline_analyzer tests.test_macro_analyzer tests.test_knowledge_loader tests.test_history_store tests.test_history_aggregate tests.test_importer tests.test_profile_generator tests.test_insight_engine tests.test_backfill tests.test_ai_report_generator tests.test_data_dragon tests.test_game_state tests.test_item_loader tests.test_item_recommender tests.test_coaching_report tests.test_benchmark tests.test_benchmark_section; do
+for m in tests.test_riot_client tests.test_analyzer tests.test_timeline_analyzer tests.test_macro_analyzer tests.test_knowledge_loader tests.test_history_store tests.test_history_aggregate tests.test_importer tests.test_profile_generator tests.test_insight_engine tests.test_backfill tests.test_ai_report_generator tests.test_data_dragon tests.test_game_state tests.test_item_loader tests.test_item_recommender tests.test_coaching_report tests.test_benchmark tests.test_benchmark_section tests.test_recommendation_schema; do
   .venv/Scripts/python.exe -m "$m" || exit 1
 done
 ```
@@ -142,3 +152,10 @@ New decisions established this session:
 - **Benchmark comparisons are informational only and must never become coaching priorities.** `src/coaching/priorities.py` never imports `src/coaching/benchmark_section.py` or reads its output. This is enforced by a test (`test_benchmark_gaps_never_become_coaching_priorities`) that asserts `main_lessons`/`next_game_focus` are byte-identical whether or not benchmark data is present — not just a docstring claim.
 - **A metric registry (`METRIC_DIRECTIONS`) is a deliberate, small, code-level scaling ceiling** — the same tradeoff already accepted for `item_recommender.py`'s `TRIGGER_KEYWORDS` (see `ARCHITECTURE_AUDIT.md` Finding E). Adding a new benchmark metric means adding one dict entry, not touching comparison logic.
 - **Wiring a new analysis step into the automatic import flow means adding one composition function to the owning analysis module and one call site in `importer.py`, never inline logic in `importer.py` itself.** `item_recommender.generate_item_recommendations()` (composing `build_snapshot_from_match` + knowledge loading + `recommend_items`) is the concrete precedent for this — the same "importer orchestrates, modules analyze" rule already established for `analyze_match()`/`macro_analyze()`, now proven out a second time for a genuinely different analysis pipeline.
+
+New decisions established this checkpoint (the recommendation-system pivot):
+
+- **AI is optional and explanation-only, project-wide, not just for post-game coaching.** Any future draft/rune/live explanation feature must reuse `src/ai/prompt_builder.py`/`validator.py`'s existing grounding pattern — one AI wrapper for the whole project, never a new one per domain.
+- **A shared recommendation contract (`src/recommendations/schema.py`) exists, but nothing has been migrated onto it yet.** `item_recommender.py` and `coaching/priorities.py` keep their current output shapes unchanged; migration is an additive adapter (Stage 1), not a rewrite, and a native-format Stage 2 migration is explicitly deferred until a second real system (draft or rune) has proven the schema out. Do not force this migration prematurely.
+- **`confidence` (data quality) and `severity` (impact/urgency) are two distinct axes going forward**, resolving `ARCHITECTURE_AUDIT.md` Finding C's three-incompatible-vocabularies problem for any *new* system built against the shared schema. Existing systems (`macro_analyzer.py`'s `confidence`/`tier`, `item_recommender.py`'s `confidence_tier`/`confidence_score`) are not retrofitted — only the adapters translate into this vocabulary, per the point above.
+- **`src/draft/` and `src/live/` are not started.** Per explicit instruction this checkpoint, only the shared contract was built — no champion-select or live-client integration exists yet.
