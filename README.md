@@ -69,6 +69,56 @@ already-computed findings from `player_insights.json`; it never decides what
 the findings are, and the tool is fully usable without it. See
 `ARCHITECTURE_AUDIT.md` for the full data-flow breakdown.
 
+## Draft Assistant (Champion Select)
+
+A runnable command-line tool that watches League's champion select and
+prints/publishes deterministic draft guidance — no UI required. It reads
+the League client's local, unauthenticated-to-us API (via the lockfile
+League itself writes on launch), builds a source-agnostic draft snapshot,
+and runs it through the same rule-based recommendation engine as the rest
+of this tool (no AI, no scraped stats, no win rates).
+
+```
+# One poll, publish the result, print a status line, exit:
+python -m src.draft.cli --once
+
+# Poll repeatedly until you press Ctrl+C:
+python -m src.draft.cli --watch
+```
+
+Options (both modes): `--output PATH` (default `reports/runtime/draft_state.json`),
+`--lockfile PATH` (default: the standard League install location),
+`--verbose` (also print the full JSON state each poll). `--watch`-only:
+`--interval SECONDS` (default `5.0`).
+
+The published JSON always has this shape:
+
+```json
+{
+  "state_schema_version": 1,
+  "state": "champ_select_active",
+  "draft_snapshot": { "...": "..." },
+  "recommendations": [ { "...": "..." } ],
+  "champion_catalog_version": "14.1.1",
+  "warnings": [],
+  "error": null
+}
+```
+
+`state` is one of `league_client_unavailable` (League isn't open),
+`idle_no_champ_select` (League is open, nothing to draft right now),
+`champ_select_active` (a real session was found and processed — covers
+both picking a champion and reviewing an already-locked one), or
+`processing_error` (something unexpected happened during that poll — never
+silently treated as idle). The file is written atomically, so nothing
+reading it will ever see a partial write. Requires no network calls beyond
+the League client itself already running on this machine, and no paid
+service of any kind.
+
+Champion-profile knowledge currently covers only the player's own pool
+(Yone, Akali, Fizz, Syndra, Pyke) — see `CHECKPOINT.md` Sec.3 for the exact
+current coverage and scoring limitations.
+
 ## Folder Structure
 
 - `data/raw_matches/` — raw match + timeline JSON pulled from the Riot API.
@@ -81,10 +131,13 @@ the findings are, and the tool is fully usable without it. See
 - `knowledge/matchups/` — matchup-specific notes (not yet populated — see `KNOWLEDGE_SYSTEM_PLAN.md`).
 - `knowledge/coaching_philosophy.md` — principles the (optional) AI layer follows when phrasing feedback.
 - `reports/generated_reports/` — generated analysis, macro patterns, insights, and item recommendations, one set per match.
-- `src/riot/` — Riot API client + Data Dragon static-data client.
+- `reports/runtime/` — `draft_state.json`, published by `src/draft/cli.py`/`src/runtime/state_publisher.py` (generated, gitignored).
+- `src/riot/` — Riot API client + Data Dragon static-data client (items and champions).
 - `src/analysis/` — structured extraction and rule-based analysis (macro patterns, timeline facts, item recommendations).
 - `src/history/`, `src/profile/`, `src/insights/` — persistence, cross-game aggregation, and insight generation.
-- `src/knowledge/` — markdown knowledge-file parsers.
+- `src/knowledge/` — markdown knowledge-file parsers (macro-coaching notes, item guidance, champion draft profiles).
+- `src/draft/` — LCU client, draft snapshot builder, draft recommender, runtime service, and the `--once`/`--watch` CLI (see "Draft Assistant" above).
+- `src/runtime/` — `SessionPoller` (shared polling foundation) and `state_publisher.py` (atomic local JSON output).
 - `src/ai/` — optional, opt-in prompt/validation/report layer (not required to use the rest of the tool).
 - `src/main.py` — original Phase-1 bootstrap script, superseded by `src/history/importer.py`/`backfill.py` — see `ARCHITECTURE_AUDIT.md` Finding A.
 - `.env.example` — template for required secrets/config; copy to `.env` (gitignored).

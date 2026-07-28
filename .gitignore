@@ -18,6 +18,10 @@ data/database/*
 reports/generated_reports/*
 !reports/generated_reports/.gitkeep
 
+# Published draft runtime state — private, regenerable (src/runtime/state_publisher.py)
+reports/runtime/*
+!reports/runtime/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db
