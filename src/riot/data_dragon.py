@@ -18,6 +18,7 @@ STATIC_DIR = PROJECT_ROOT / "data" / "static"
 
 VERSIONS_URL = "https://ddragon.leagueoflegends.com/api/versions.json"
 ITEM_URL_TEMPLATE = "https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/item.json"
+CHAMPION_URL_TEMPLATE = "https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/champion.json"
 
 
 def fetch_latest_version(get_fn=requests.get) -> str:
@@ -72,6 +73,69 @@ def load_item_catalog(static_dir: Path = STATIC_DIR, get_fn=requests.get) -> dic
             json.dump(raw_item_data, f, indent=2)
 
     return build_item_catalog(raw_item_data, version=version)
+
+
+def fetch_champion_data(version: str, get_fn=requests.get) -> dict:
+    """Returns Data Dragon's raw champion.json 'data' mapping: champion
+    id-slug (e.g. "MonkeyKing") -> fields."""
+    response = get_fn(CHAMPION_URL_TEMPLATE.format(version=version), timeout=10)
+    response.raise_for_status()
+    return response.json()["data"]
+
+
+def build_champion_catalog(raw_champion_data: dict, version: str = "unknown") -> dict:
+    """Reshapes Data Dragon's raw champion data into a lookup catalog keyed
+    both by numeric champion id (int, matches DraftSnapshot's champion_id)
+    and by lowercased canonical display name. Pure function -- no network.
+
+    Keyed off each entry's "key" (numeric id) and "name" (display name,
+    e.g. "Wukong") fields -- never the outer dict key or "id" field, which
+    are both the internal slug (e.g. "MonkeyKing"), not what a human or a
+    knowledge file would call the champion.
+    """
+    champions_by_id = {}
+    champions_by_name = {}
+
+    for fields in raw_champion_data.values():
+        champion_id = int(fields["key"])
+        entry = {"id": champion_id, "name": fields["name"]}
+        champions_by_id[champion_id] = entry
+        champions_by_name[fields["name"].lower()] = entry
+
+    return {"version": version, "champions_by_id": champions_by_id, "champions_by_name": champions_by_name}
+
+
+def load_champion_catalog(static_dir: Path = STATIC_DIR, get_fn=requests.get) -> dict:
+    """Loads the cached champion catalog, fetching and caching it if missing
+    or if a newer patch version is available. Mirrors load_item_catalog()'s
+    caching behavior exactly -- same static_dir, same version-check
+    pattern, own cache filename, so the two catalogs never collide.
+    """
+    version = fetch_latest_version(get_fn=get_fn)
+    cache_path = static_dir / f"champion_data_{version}.json"
+
+    if cache_path.exists():
+        with open(cache_path, encoding="utf-8") as f:
+            raw_champion_data = json.load(f)
+    else:
+        raw_champion_data = fetch_champion_data(version, get_fn=get_fn)
+        static_dir.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(raw_champion_data, f, indent=2)
+
+    return build_champion_catalog(raw_champion_data, version=version)
+
+
+def champion_name_from_id(catalog: dict, champion_id: int) -> str | None:
+    """Never guesses -- an id absent from the catalog returns None."""
+    entry = catalog["champions_by_id"].get(champion_id)
+    return entry["name"] if entry else None
+
+
+def champion_id_from_name(catalog: dict, name: str) -> int | None:
+    """Never guesses -- a name absent from the catalog returns None."""
+    entry = catalog["champions_by_name"].get(name.lower())
+    return entry["id"] if entry else None
 
 
 def main() -> None:
