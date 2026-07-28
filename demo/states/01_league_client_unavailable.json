@@ -1,0 +1,9 @@
+{
+  "state_schema_version": 1,
+  "state": "league_client_unavailable",
+  "draft_snapshot": null,
+  "recommendations": [],
+  "champion_catalog_version": null,
+  "warnings": [],
+  "error": null
+}

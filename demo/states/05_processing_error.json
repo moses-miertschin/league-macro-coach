@@ -1,0 +1,9 @@
+{
+  "state_schema_version": 1,
+  "state": "processing_error",
+  "draft_snapshot": null,
+  "recommendations": [],
+  "champion_catalog_version": null,
+  "warnings": [],
+  "error": "session_source raised: ConnectionError('example error for demo purposes')"
+}

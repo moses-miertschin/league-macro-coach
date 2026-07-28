@@ -1,0 +1,89 @@
+{
+  "state_schema_version": 1,
+  "state": "champ_select_active",
+  "draft_snapshot": {
+    "ally_team": [
+      {"cell_id": 0, "champion_id": null, "assigned_position": "bottom"},
+      {"cell_id": 1, "champion_id": 201, "assigned_position": "jungle"}
+    ],
+    "enemy_team": [
+      {"cell_id": 5, "champion_id": 301, "assigned_position": "middle"}
+    ],
+    "ally_picks": [201],
+    "enemy_picks": [301],
+    "ally_bans": [],
+    "enemy_bans": [],
+    "current_player": {"cell_id": 0, "champion_id": null, "assigned_position": "bottom"},
+    "phase": {"name": "BAN_PICK", "time_left_ms": 27000, "is_infinite": false}
+  },
+  "recommendations": [
+    {
+      "system": "draft",
+      "category": "pick_recommendation",
+      "subject": "Ashe",
+      "recommendation": "Ashe",
+      "reason": "Ashe plays bottom. Ashe has an authored favorable matchup against Malphite, already on the enemy team.",
+      "evidence": [
+        {"fact": "role_fit", "champion": "Ashe", "role": "bottom"},
+        {"fact": "favorable_enemy_matchup", "favorable_against": ["Malphite"]}
+      ],
+      "confidence": "high",
+      "confidence_score": null,
+      "severity": "medium",
+      "priority": 1,
+      "source": "champion_knowledge",
+      "details": {
+        "player_role": "bottom",
+        "score_breakdown": {
+          "role_fit": "required",
+          "damage_balance": 0,
+          "direct_synergy": 0,
+          "favorable_enemy_matchup": 1,
+          "common_counter_risk": 0,
+          "total": 1
+        },
+        "strengths": ["Long-range poke", "Global ultimate"],
+        "preferred_playstyle": "Safe poke and kiting",
+        "unresolved_ally_ids": [],
+        "missing_ally_profiles": [],
+        "unresolved_enemy_ids": [],
+        "locked_enemy_names": ["Malphite"]
+      }
+    },
+    {
+      "system": "draft",
+      "category": "pick_recommendation",
+      "subject": "Jinx",
+      "recommendation": "Jinx",
+      "reason": "Jinx plays bottom.",
+      "evidence": [
+        {"fact": "role_fit", "champion": "Jinx", "role": "bottom"}
+      ],
+      "confidence": "high",
+      "confidence_score": null,
+      "severity": "low",
+      "priority": 2,
+      "source": "champion_knowledge",
+      "details": {
+        "player_role": "bottom",
+        "score_breakdown": {
+          "role_fit": "required",
+          "damage_balance": 0,
+          "direct_synergy": 0,
+          "favorable_enemy_matchup": 0,
+          "common_counter_risk": 0,
+          "total": 0
+        },
+        "strengths": ["Scaling hyper-carry"],
+        "preferred_playstyle": "Scale safely then reposition for teamfights",
+        "unresolved_ally_ids": [],
+        "missing_ally_profiles": [],
+        "unresolved_enemy_ids": [],
+        "locked_enemy_names": ["Malphite"]
+      }
+    }
+  ],
+  "champion_catalog_version": "demo-1",
+  "warnings": [],
+  "error": null
+}

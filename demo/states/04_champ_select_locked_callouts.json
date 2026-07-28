@@ -1,0 +1,67 @@
+{
+  "state_schema_version": 1,
+  "state": "champ_select_active",
+  "draft_snapshot": {
+    "ally_team": [
+      {"cell_id": 0, "champion_id": 401, "assigned_position": "middle"},
+      {"cell_id": 1, "champion_id": 501, "assigned_position": "top"}
+    ],
+    "enemy_team": [
+      {"cell_id": 5, "champion_id": 301, "assigned_position": "top"},
+      {"cell_id": 6, "champion_id": 601, "assigned_position": "bottom"}
+    ],
+    "ally_picks": [401, 501],
+    "enemy_picks": [301, 601],
+    "ally_bans": [],
+    "enemy_bans": [],
+    "current_player": {"cell_id": 0, "champion_id": 401, "assigned_position": "middle"},
+    "phase": {"name": "FINALIZATION", "time_left_ms": 45000, "is_infinite": false}
+  },
+  "recommendations": [
+    {
+      "system": "draft",
+      "category": "counter_warning",
+      "subject": "Malphite",
+      "recommendation": null,
+      "reason": "Malphite is a known counter to Yone.",
+      "evidence": [{"fact": "common_counter", "champion": "Malphite", "player_champion": "Yone"}],
+      "confidence": "high",
+      "confidence_score": null,
+      "severity": "high",
+      "priority": 1,
+      "source": "champion_knowledge",
+      "details": {"player_role": "middle"}
+    },
+    {
+      "system": "draft",
+      "category": "ally_synergy",
+      "subject": "Nautilus",
+      "recommendation": null,
+      "reason": "Nautilus has strong synergy with Yone.",
+      "evidence": [{"fact": "synergy_champion", "champion": "Nautilus", "player_champion": "Yone"}],
+      "confidence": "high",
+      "confidence_score": null,
+      "severity": "medium",
+      "priority": 2,
+      "source": "champion_knowledge",
+      "details": {"player_role": "middle"}
+    },
+    {
+      "system": "draft",
+      "category": "favorable_matchup",
+      "subject": "Zed",
+      "recommendation": null,
+      "reason": "Zed is a favorable matchup for Yone.",
+      "evidence": [{"fact": "favorable_matchup", "champion": "Zed", "player_champion": "Yone"}],
+      "confidence": "high",
+      "confidence_score": null,
+      "severity": "low",
+      "priority": 3,
+      "source": "champion_knowledge",
+      "details": {"player_role": "middle"}
+    }
+  ],
+  "champion_catalog_version": "demo-1",
+  "warnings": [],
+  "error": null
+}
