@@ -31,8 +31,10 @@ import json
 import time
 from pathlib import Path
 
+from src.draft.capture import CAPTURE_FILE_WARNING, capture_champ_select
 from src.draft.client import LCUClient
 from src.draft.service import DraftRuntimeService
+from src.draft.snapshot import build_draft_snapshot
 from src.runtime.state_publisher import DEFAULT_OUTPUT_PATH, publish_state
 
 DEFAULT_INTERVAL_SECONDS = 5.0
@@ -46,6 +48,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--once", action="store_true", help="Perform a single poll, publish the result, and exit.")
     mode.add_argument("--watch", action="store_true", help="Poll repeatedly on --interval until Ctrl+C.")
+    mode.add_argument(
+        "--capture-once", action="store_true",
+        help="Capture one real (sanitized) champ-select session for fixture validation. Writes nothing if no session is active.",
+    )
     parser.add_argument(
         "--output", type=Path, default=DEFAULT_OUTPUT_PATH,
         help=f"Where to write the published state JSON (default: {DEFAULT_OUTPUT_PATH}).",
@@ -62,8 +68,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build_lcu_client(lockfile_path: Path | None) -> LCUClient:
+    return LCUClient(lockfile_path=lockfile_path) if lockfile_path is not None else LCUClient()
+
+
 def _build_service(lockfile_path: Path | None) -> DraftRuntimeService:
-    lcu_client = LCUClient(lockfile_path=lockfile_path) if lockfile_path is not None else LCUClient()
+    lcu_client = _build_lcu_client(lockfile_path)
     return DraftRuntimeService(session_source=lcu_client, client_running_check=lcu_client.is_client_running)
 
 
@@ -116,10 +126,37 @@ def run_watch(
         print_fn("[draft] stopping (Ctrl+C received).")
 
 
+def run_capture_once(
+    session_source,
+    snapshot_builder=build_draft_snapshot,
+    capture_fn=capture_champ_select,
+    print_fn=print,
+) -> dict | None:
+    """Explicitly-invoked only -- never called from run_once()/run_watch(),
+    never part of the regular poll flow. Captures nothing (and writes no
+    file at all) when there's no active champ-select session to sample."""
+    raw_session = session_source()
+    if raw_session is None:
+        print_fn("[draft] no active champ-select session to capture -- nothing written.")
+        return None
+
+    snapshot = snapshot_builder(raw_session)
+    paths = capture_fn(raw_session, snapshot)
+    print_fn(f"[draft] captured sanitized raw session -> {paths['raw_path']}")
+    print_fn(f"[draft] captured normalized snapshot -> {paths['snapshot_path']}")
+    print_fn(f"[draft] {CAPTURE_FILE_WARNING}")
+    return paths
+
+
 def main(argv=None) -> None:
     args = build_arg_parser().parse_args(argv)
-    service = _build_service(args.lockfile)
 
+    if args.capture_once:
+        lcu_client = _build_lcu_client(args.lockfile)
+        run_capture_once(session_source=lcu_client)
+        return
+
+    service = _build_service(args.lockfile)
     if args.once:
         run_once(service, output_path=args.output, verbose=args.verbose)
     else:

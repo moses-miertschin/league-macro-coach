@@ -12,7 +12,7 @@ Run with: python -m tests.test_draft_cli
 import tempfile
 from pathlib import Path
 
-from src.draft.cli import _build_service, build_arg_parser, run_once, run_watch
+from src.draft.cli import _build_service, build_arg_parser, run_capture_once, run_once, run_watch
 from src.draft.client import LCUClient
 from src.draft.service import DraftRuntimeService
 from src.runtime.state_publisher import DEFAULT_OUTPUT_PATH
@@ -46,12 +46,16 @@ class _FakeService:
 # ---- argument parsing ----
 
 
-def test_once_and_watch_are_mutually_exclusive_and_one_is_required():
+def test_once_watch_and_capture_once_are_mutually_exclusive_and_one_is_required():
     parser = build_arg_parser()
 
     args = parser.parse_args(["--once"])
     assert args.once is True
     assert args.watch is False
+    assert args.capture_once is False
+
+    args = parser.parse_args(["--capture-once"])
+    assert args.capture_once is True
 
     try:
         parser.parse_args(["--once", "--watch"])
@@ -61,11 +65,18 @@ def test_once_and_watch_are_mutually_exclusive_and_one_is_required():
         raise AssertionError("Expected --once and --watch to be mutually exclusive")
 
     try:
+        parser.parse_args(["--once", "--capture-once"])
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("Expected --once and --capture-once to be mutually exclusive")
+
+    try:
         parser.parse_args([])
     except SystemExit:
         pass
     else:
-        raise AssertionError("Expected an error when neither --once nor --watch is given")
+        raise AssertionError("Expected an error when none of --once/--watch/--capture-once is given")
 
 
 def test_parser_defaults():
@@ -188,6 +199,57 @@ def test_run_watch_reflects_state_changes_across_polls():
     assert [s["state"] for s in published] == ["champ_select_active", "idle_no_champ_select"]
 
 
+# ---- --capture-once ----
+
+
+def test_run_capture_once_writes_nothing_when_no_active_session():
+    printed = []
+
+    result = run_capture_once(session_source=lambda: None, print_fn=printed.append)
+
+    assert result is None
+    assert any("no active" in line.lower() for line in printed)
+
+
+def test_run_capture_once_captures_when_a_session_is_active():
+    fake_raw_session = {"myTeam": [], "theirTeam": [], "localPlayerCellId": 0, "bans": {}, "timer": {}}
+    fake_snapshot = {"ally_picks": [], "enemy_picks": []}
+    captured = {}
+
+    def fake_capture_fn(raw_session, snapshot, capture_dir=None):
+        captured["raw_session"] = raw_session
+        captured["snapshot"] = snapshot
+        captured["capture_dir"] = capture_dir
+        return {"raw_path": Path("fake_raw.json"), "snapshot_path": Path("fake_snapshot.json")}
+
+    printed = []
+    result = run_capture_once(
+        session_source=lambda: fake_raw_session,
+        snapshot_builder=lambda raw: fake_snapshot,
+        capture_fn=fake_capture_fn,
+        print_fn=printed.append,
+    )
+
+    assert result == {"raw_path": Path("fake_raw.json"), "snapshot_path": Path("fake_snapshot.json")}
+    assert captured["raw_session"] == fake_raw_session
+    assert captured["snapshot"] == fake_snapshot
+    assert any("fake_raw.json" in line for line in printed)
+    assert any("fake_snapshot.json" in line for line in printed)
+
+
+def test_run_capture_once_prints_the_review_warning():
+    printed = []
+
+    run_capture_once(
+        session_source=lambda: {"myTeam": [], "theirTeam": [], "localPlayerCellId": 0, "bans": {}, "timer": {}},
+        snapshot_builder=lambda raw: {},
+        capture_fn=lambda raw_session, snapshot: {"raw_path": Path("a"), "snapshot_path": Path("b")},
+        print_fn=printed.append,
+    )
+
+    assert any("review" in line.lower() for line in printed)
+
+
 # ---- service construction (real LCUClient wiring, no network) ----
 
 
@@ -211,7 +273,7 @@ def test_build_service_defaults_to_standard_lockfile_path_when_unspecified():
 
 
 if __name__ == "__main__":
-    test_once_and_watch_are_mutually_exclusive_and_one_is_required()
+    test_once_watch_and_capture_once_are_mutually_exclusive_and_one_is_required()
     test_parser_defaults()
     test_parser_accepts_all_options()
     test_run_once_polls_publishes_and_prints_status()
@@ -219,6 +281,9 @@ if __name__ == "__main__":
     test_run_watch_publishes_after_every_poll_and_uses_configured_interval()
     test_run_watch_stops_cleanly_on_keyboard_interrupt_and_prints_a_message()
     test_run_watch_reflects_state_changes_across_polls()
+    test_run_capture_once_writes_nothing_when_no_active_session()
+    test_run_capture_once_captures_when_a_session_is_active()
+    test_run_capture_once_prints_the_review_warning()
     test_build_service_wires_a_real_lcuclient_with_no_lockfile_present()
     test_build_service_defaults_to_standard_lockfile_path_when_unspecified()
     print("All checks passed.")

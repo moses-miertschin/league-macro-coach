@@ -22,6 +22,12 @@ reports/generated_reports/*
 reports/runtime/*
 !reports/runtime/.gitkeep
 
+# Sanitized real champ-select captures (src/draft/capture.py) -- best-effort
+# sanitized, not a guarantee; never commit without a manual review, per the
+# warning baked into every captured file itself.
+reports/captures/*
+!reports/captures/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db
