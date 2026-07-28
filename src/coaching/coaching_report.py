@@ -24,6 +24,7 @@ from src.benchmark.storage import BENCHMARK_DATA_PATH
 from src.coaching.benchmark_section import build_benchmark_section
 from src.coaching.formatter import print_session
 from src.coaching.priorities import select_priorities
+from src.recommendations.adapters import adapt_item_recommendation, adapt_macro_lesson
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 REPORTS_DIR = PROJECT_ROOT / "reports" / "generated_reports"
@@ -56,6 +57,18 @@ def _item_review(item_recommendations: dict | None) -> dict:
     }
 
 
+def _shared_recommendations(item_recommendations: dict | None, main_lessons: list) -> list:
+    """Additive shared-schema view of this session's recommendations, per
+    RECOMMENDATION_SYSTEM_DESIGN.md's Stage-1 adapters. Pure coordination --
+    translation logic lives in src/recommendations/adapters.py, not here.
+    """
+    entries = []
+    if item_recommendations is not None:
+        entries.extend(adapt_item_recommendation(r) for r in item_recommendations.get("recommendations", []))
+    entries.extend(adapt_macro_lesson(lesson) for lesson in main_lessons)
+    return entries
+
+
 def build_coaching_session(
     match_id: str,
     reports_dir: Path = REPORTS_DIR,
@@ -82,6 +95,7 @@ def build_coaching_session(
         "benchmark": build_benchmark_section(analysis, macro_patterns, benchmark_path=benchmark_path),
         "strengths": (insights or {}).get("strengths", []),
         "next_game_focus": [lesson["issue"] for lesson in main_lessons],
+        "shared_recommendations": _shared_recommendations(item_recommendations, main_lessons),
     }
 
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from src.benchmark.storage import add_benchmark_entry
 from src.coaching.coaching_report import build_coaching_session
 from src.coaching.priorities import MAX_LESSONS, select_priorities
+from src.recommendations.schema import validate_recommendation
 
 STRONG_INSIGHTS = {
     "player_summary": {"games_analyzed": 20, "main_champion": "Yone", "main_role": "MIDDLE"},
@@ -125,7 +126,16 @@ ITEM_RECOMMENDATIONS = {
     "champion": "Akali",
     "player_state": {"current_items": ["Riftmaker"], "available_gold": 1200, "game_state": "behind"},
     "recommendations": [
-        {"item": "Zhonya's Hourglass", "priority": 1, "reason": "Zhonya's Hourglass: Valuable when behind.", "confidence_score": 75},
+        {
+            "item": "Zhonya's Hourglass",
+            "priority": 1,
+            "reason": "Zhonya's Hourglass: Valuable when behind.",
+            "confidence_score": 75,
+            "confidence_tier": "high",
+            "source": "champion_knowledge",
+            "triggered_rules": ["game_state_behind"],
+            "evidence": [],
+        },
     ],
     "unrecognized_items_flagged": [],
 }
@@ -226,6 +236,68 @@ def test_benchmark_gaps_never_become_coaching_priorities():
         assert all(l["issue"] != "vision_score" for l in session_with_benchmark["main_lessons"])
 
 
+def test_shared_recommendations_include_adapted_item_and_macro_entries():
+    with _TempReports() as tmp:
+        tmp.write("NA1_TEST_analysis.json", ANALYSIS)
+        tmp.write("NA1_TEST_macro_patterns.json", WEAK_MACRO_PATTERNS)
+        tmp.write("NA1_TEST_item_recommendations.json", ITEM_RECOMMENDATIONS)
+        tmp.write("player_insights.json", WEAK_INSIGHTS)
+
+        session = build_coaching_session("NA1_TEST", reports_dir=tmp.reports_dir, profile_path=tmp.profile_path)
+
+        shared = session["shared_recommendations"]
+        item_entries = [e for e in shared if e["system"] == "item"]
+        macro_entries = [e for e in shared if e["system"] == "macro"]
+
+        assert len(item_entries) == len(ITEM_RECOMMENDATIONS["recommendations"])
+        assert item_entries[0]["subject"] == "Zhonya's Hourglass"
+
+        assert len(macro_entries) == len(session["main_lessons"])
+        assert [e["subject"] for e in macro_entries] == [l["issue"] for l in session["main_lessons"]]
+
+        # every adapted entry must be schema-valid, not just present
+        for entry in shared:
+            assert validate_recommendation(entry) == []
+
+
+def test_shared_recommendations_stay_backwards_compatible_without_item_recommendations():
+    with _TempReports() as tmp:
+        tmp.write("NA1_TEST_analysis.json", ANALYSIS)
+        tmp.write("NA1_TEST_macro_patterns.json", WEAK_MACRO_PATTERNS)
+        tmp.write("player_insights.json", WEAK_INSIGHTS)
+        # no item_recommendations file written -- must not crash the new field
+
+        session = build_coaching_session("NA1_TEST", reports_dir=tmp.reports_dir, profile_path=tmp.profile_path)
+
+        shared = session["shared_recommendations"]
+        assert all(e["system"] == "macro" for e in shared)
+        assert len(shared) == len(session["main_lessons"])
+        for entry in shared:
+            assert validate_recommendation(entry) == []
+
+
+def test_shared_recommendations_field_is_purely_additive():
+    with _TempReports() as tmp:
+        tmp.write("NA1_TEST_analysis.json", ANALYSIS)
+        tmp.write("NA1_TEST_macro_patterns.json", WEAK_MACRO_PATTERNS)
+        tmp.write("NA1_TEST_item_recommendations.json", ITEM_RECOMMENDATIONS)
+        tmp.write("player_insights.json", WEAK_INSIGHTS)
+
+        session = build_coaching_session("NA1_TEST", reports_dir=tmp.reports_dir, profile_path=tmp.profile_path)
+
+        # every pre-existing field/shape from before this integration must be untouched
+        assert session["player"] == "HelloKittler#meow"
+        assert session["champion"] == "Akali"
+        assert session["game_result"] == "Loss"
+        assert len(session["main_lessons"]) == MAX_LESSONS
+        assert session["item_review"]["status"] == "available"
+        assert session["item_review"]["top_recommendations"][0]["item"] == "Zhonya's Hourglass"
+        assert session["strengths"] == WEAK_INSIGHTS["strengths"]
+        assert session["next_game_focus"] == [l["issue"] for l in session["main_lessons"]]
+        assert "benchmark" in session
+        assert "shared_recommendations" in session  # the one new key
+
+
 def test_missing_analysis_raises_rather_than_fabricating_a_report():
     with _TempReports() as tmp:
         try:
@@ -243,6 +315,9 @@ if __name__ == "__main__":
     test_no_fabricated_evidence()
     test_full_session_combines_all_sources()
     test_missing_item_recommendations_stays_unavailable_not_fabricated()
+    test_shared_recommendations_include_adapted_item_and_macro_entries()
+    test_shared_recommendations_stay_backwards_compatible_without_item_recommendations()
+    test_shared_recommendations_field_is_purely_additive()
     test_benchmark_comparison_appears_in_coaching_output()
     test_missing_benchmark_data_remains_unavailable_in_full_session()
     test_benchmark_gaps_never_become_coaching_priorities()
