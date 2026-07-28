@@ -3,3 +3,4 @@ riotwatcher      # Riot API client (Phase 0: match retrieval)
 python-dotenv    # loads .env into environment variables
 anthropic        # Claude API client (Phase 3: AI coaching reports)
 requests         # Data Dragon static item data client (src/riot/data_dragon.py)
+PySide6>=6.7,<7.0  # desktop application UI (src/ui/app.py, src/ui/main_window.py, src/ui/widgets/)
