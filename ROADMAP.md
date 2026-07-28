@@ -52,12 +52,12 @@ Design note for when runes are built: extract the trigger-matching core currentl
 
 In order:
 
-1. Shared polling/runtime infrastructure.
-2. `src/draft/` — LCU client + `DraftSnapshot`.
-3. `knowledge/runes/` + rune recommender.
-4. `knowledge/drafting/` + draft/synergy recommender.
-5. `src/live/` — per `LIVE_SYSTEM_DESIGN.md` (recall/item advisor, objective timer). Wave management stays explicitly out of scope — infeasible with available data, not merely deferred.
-6. The shared recommendation-output contract, formalized once 2–5 exist.
+1. Shared polling/runtime infrastructure. **Done** (`src/runtime/poller.py`).
+2. `src/draft/` — LCU client + `DraftSnapshot`. **Done, and substantially further along than this line implies** — `src/draft/` now also has a native recommendation engine (`recommender.py`, both locked-champion callouts and pre-lock pick recommendations), an orchestration service (`service.py`), a runnable CLI (`cli.py`, `--once`/`--watch`), a local state publisher (`src/runtime/state_publisher.py`), and a real-fixture-validation capture tool (`capture.py`, `--capture-once`) — everything short of a real champion-select session ever having driven it and a UI to read the published state. See `CHECKPOINT.md` for the authoritative current inventory; this line is intentionally not rewritten in full here to avoid this strategy document drifting into a build log.
+3. `knowledge/runes/` + rune recommender. Not started.
+4. `knowledge/drafting/` + draft/synergy recommender (full 5v5 team-composition scoring — distinct from and bigger than the pairwise ally/enemy signals `src/draft/recommender.py` already has). Not started.
+5. `src/live/` — per `LIVE_SYSTEM_DESIGN.md` (recall/item advisor, objective timer). Wave management stays explicitly out of scope — infeasible with available data, not merely deferred. Not started.
+6. The shared recommendation-output contract, formalized once 2–5 exist. **Built earlier than this ordering anticipated** (`src/recommendations/schema.py`) — proven out by three real producers now (item via adapter, macro via adapter, draft natively), ahead of steps 3–5. Not a problem: the contract was designed to generalize across all five systems from the start, so building it early didn't require guessing at rune/live's specifics.
 7. UI/overlay — not part of this roadmap.
 
 ## 5. AI vs. Deterministic (Project-Wide Policy)
