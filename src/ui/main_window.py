@@ -18,7 +18,7 @@ the two, since it already bridges app_state -> widgets via
 update_from_app_state().
 """
 
-from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QMainWindow, QScrollArea, QVBoxLayout, QWidget
 
 from src.ui.presentation import build_presentation
 from src.ui.state_reader import FILE_MISSING, INVALID_JSON, INVALID_STATE_SHAPE, READ_ERROR, VALID_STATE
@@ -67,17 +67,29 @@ class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("LeagueMacroCoach — Draft Assistant")
+        self.setMinimumSize(480, 640)
+        self.resize(560, 760)
 
         self.status_header = StatusHeaderWidget()
         self.draft_summary = DraftSummaryWidget()
         self.recommendations = RecommendationListWidget()
         self.diagnostics = DiagnosticsWidget()
 
+        # The recommendation list is the one section whose length is
+        # genuinely unbounded (up to TOP_N_PICK_RECOMMENDATIONS candidates,
+        # or several locked-champion callouts) -- wrapped in its own
+        # scroll area so a long list scrolls in place instead of growing
+        # the window past the screen or squeezing the always-relevant
+        # status/diagnostics sections off it.
+        recommendations_scroll = QScrollArea()
+        recommendations_scroll.setWidget(self.recommendations)
+        recommendations_scroll.setWidgetResizable(True)
+
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.addWidget(self.status_header)
         layout.addWidget(self.draft_summary)
-        layout.addWidget(self.recommendations)
+        layout.addWidget(recommendations_scroll)
         layout.addWidget(self.diagnostics)
         self.setCentralWidget(central)
 

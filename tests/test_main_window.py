@@ -13,7 +13,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QScrollArea
 
 from src.draft.service import CHAMP_SELECT_ACTIVE, LEAGUE_CLIENT_UNAVAILABLE
 from src.ui.main_window import MainWindow
@@ -136,6 +136,40 @@ def test_update_from_state_result_read_error_is_handled_honestly():
     assert "IsADirectoryError" in window.status_header.message_text
 
 
+def test_recommendations_are_wrapped_in_a_scroll_area_so_long_lists_dont_grow_the_window():
+    window = MainWindow()
+    scroll_areas = window.centralWidget().findChildren(QScrollArea)
+
+    assert len(scroll_areas) == 1
+    assert scroll_areas[0].widget() is window.recommendations
+    assert scroll_areas[0].widgetResizable() is True
+
+
+def test_scrolled_recommendations_still_update_normally():
+    window = MainWindow()
+
+    window.update_presentation({
+        "status_header": {"title": "Champ Select Active", "message": "Live.", "severity": "low", "show_content": True},
+        "draft_summary": None,
+        "recommendation_cards": [{
+            "priority": 1, "category": "pick_recommendation", "subject": "Ashe", "recommendation": "Ashe",
+            "reason": "Ashe plays bottom.", "evidence": [], "severity": "medium", "confidence": "high",
+            "confidence_score": None, "score_breakdown": {"total": 1}, "source": "champion_knowledge", "details": {},
+        }],
+        "diagnostics": {"warnings": [], "error": None, "state_schema_version": 1, "champion_catalog_version": None,
+                        "unresolved_ally_ids": [], "unresolved_enemy_ids": [], "missing_ally_profiles": []},
+    })
+
+    assert window.recommendations.card_count == 1
+
+
+def test_main_window_has_a_reasonable_default_size():
+    window = MainWindow()
+
+    assert window.minimumSize().width() >= 400
+    assert window.minimumSize().height() >= 400
+
+
 def test_update_from_state_result_clears_stale_content_from_a_previous_valid_state():
     snapshot = {
         "current_player": {"cell_id": 0, "champion_id": None, "assigned_position": "bottom"},
@@ -160,5 +194,8 @@ if __name__ == "__main__":
     test_update_from_state_result_invalid_json_surfaces_the_reader_error()
     test_update_from_state_result_invalid_shape_surfaces_the_reader_error()
     test_update_from_state_result_read_error_is_handled_honestly()
+    test_recommendations_are_wrapped_in_a_scroll_area_so_long_lists_dont_grow_the_window()
+    test_scrolled_recommendations_still_update_normally()
+    test_main_window_has_a_reasonable_default_size()
     test_update_from_state_result_clears_stale_content_from_a_previous_valid_state()
     print("All checks passed.")
