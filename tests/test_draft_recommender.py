@@ -13,7 +13,13 @@ Run with: python -m tests.test_draft_recommender
 import copy
 import inspect
 
-from src.draft.recommender import DAMAGE_BALANCE_BONUS, DIRECT_SYNERGY_BONUS, recommend_draft
+from src.draft.recommender import (
+    COMMON_COUNTER_RISK_PENALTY,
+    DAMAGE_BALANCE_BONUS,
+    DIRECT_SYNERGY_BONUS,
+    FAVORABLE_ENEMY_MATCHUP_BONUS,
+    recommend_draft,
+)
 from src.knowledge.champion_loader import load_champion_profile
 from src.recommendations.schema import validate_recommendation
 
@@ -199,7 +205,8 @@ def test_integration_with_real_yone_profile_file_on_disk():
 
 def _make_catalog_and_profiles(champions: dict) -> tuple:
     """champions: {name: {"id": int, "roles": [...], "damage_type": ...,
-    "synergy_champions": [...] (optional), "strengths": [...] (optional)}}
+    "synergy_champions": [...] (optional), "strengths": [...] (optional),
+    "common_counters": [...] (optional), "favorable_matchups": [...] (optional)}}
 
     Returns (catalog, profiles_by_name), with every champion_schema-required
     field filled in with an honest empty default for whatever a given test
@@ -220,8 +227,8 @@ def _make_catalog_and_profiles(champions: dict) -> tuple:
             "strengths": spec.get("strengths", []),
             "weaknesses": [],
             "preferred_playstyle": spec.get("preferred_playstyle"),
-            "common_counters": [],
-            "favorable_matchups": [],
+            "common_counters": spec.get("common_counters", []),
+            "favorable_matchups": spec.get("favorable_matchups", []),
             "synergy_champions": spec.get("synergy_champions", []),
         }
     return catalog, profiles
@@ -497,12 +504,157 @@ def test_pick_recommendation_details_include_strengths_and_playstyle_without_sco
     assert annie["details"]["score_breakdown"]["total"] == ahri["details"]["score_breakdown"]["total"] == 0
 
 
+# ============================================================================
+# Stage 1: conservative enemy-side signals (candidate's own profile only,
+# read against currently locked enemy picks -- never the enemy's profile,
+# never an inferred/reversed relationship). Extends _build_pick_entry()'s
+# score_breakdown; role filtering, exclusions, damage balance, direct
+# synergy, top-3, and the locked-champion path are untouched -- every test
+# above this line requires zero changes.
+# ============================================================================
+
+
+def test_favorable_enemy_matchup_improves_ranking():
+    catalog, profiles = _make_catalog_and_profiles({
+        "Zed": {"id": 1, "roles": ["middle"], "damage_type": "physical"},  # locked enemy
+        "Annie": {"id": 2, "roles": ["middle"], "damage_type": "magic", "favorable_matchups": ["Zed"]},
+        "Ahri": {"id": 3, "roles": ["middle"], "damage_type": "magic"},
+    })
+    snapshot = _pick_snapshot(assigned_position="middle", enemy_picks=[1])
+
+    result = recommend_draft(snapshot, catalog, profile_loader_fn=profiles.get, candidate_names=["Annie", "Ahri"])
+
+    assert [e["subject"] for e in result] == ["Annie", "Ahri"]
+    assert result[0]["details"]["score_breakdown"]["favorable_enemy_matchup"] == FAVORABLE_ENEMY_MATCHUP_BONUS
+    assert result[1]["details"]["score_breakdown"]["favorable_enemy_matchup"] == 0
+    assert {"fact": "favorable_enemy_matchup", "favorable_against": ["Zed"]} in result[0]["evidence"]
+    for entry in result:
+        assert validate_recommendation(entry) == []
+
+
+def test_common_counter_risk_lowers_ranking():
+    catalog, profiles = _make_catalog_and_profiles({
+        "Zed": {"id": 1, "roles": ["middle"], "damage_type": "physical"},  # locked enemy
+        "Annie": {"id": 2, "roles": ["middle"], "damage_type": "magic", "common_counters": ["Zed"]},
+        "Ahri": {"id": 3, "roles": ["middle"], "damage_type": "magic"},
+    })
+    snapshot = _pick_snapshot(assigned_position="middle", enemy_picks=[1])
+
+    result = recommend_draft(snapshot, catalog, profile_loader_fn=profiles.get, candidate_names=["Annie", "Ahri"])
+
+    assert [e["subject"] for e in result] == ["Ahri", "Annie"]
+    assert result[0]["details"]["score_breakdown"]["common_counter_risk"] == 0
+    assert result[1]["details"]["score_breakdown"]["common_counter_risk"] == COMMON_COUNTER_RISK_PENALTY
+    assert result[1]["details"]["score_breakdown"]["total"] == -COMMON_COUNTER_RISK_PENALTY
+    assert {"fact": "common_counter_risk", "countered_by": ["Zed"]} in result[1]["evidence"]
+    for entry in result:
+        assert validate_recommendation(entry) == []
+
+
+def test_unresolved_enemy_ids_are_recorded_in_details():
+    catalog, profiles = _make_catalog_and_profiles({"Annie": {"id": 1, "roles": ["middle"], "damage_type": "magic"}})
+    snapshot = _pick_snapshot(assigned_position="middle", enemy_picks=[999])  # unresolvable
+
+    result = recommend_draft(snapshot, catalog, profile_loader_fn=profiles.get, candidate_names=["Annie"])
+
+    assert result[0]["details"]["unresolved_enemy_ids"] == [999]
+
+
+def test_unrelated_locked_enemy_has_zero_effect():
+    catalog, profiles = _make_catalog_and_profiles({
+        "Lux": {"id": 1, "roles": ["middle"], "damage_type": "magic"},  # locked enemy, unrelated
+        "Annie": {"id": 2, "roles": ["middle"], "damage_type": "magic"},
+    })
+    snapshot = _pick_snapshot(assigned_position="middle", enemy_picks=[1])
+
+    result = recommend_draft(snapshot, catalog, profile_loader_fn=profiles.get, candidate_names=["Annie"])
+
+    breakdown = result[0]["details"]["score_breakdown"]
+    assert breakdown["favorable_enemy_matchup"] == 0
+    assert breakdown["common_counter_risk"] == 0
+    assert breakdown["total"] == 0
+    assert result[0]["details"]["locked_enemy_names"] == ["Lux"]
+
+
+def test_multiple_enemy_matches_remain_fully_inspectable():
+    catalog, profiles = _make_catalog_and_profiles({
+        "Zed": {"id": 1, "roles": ["middle"], "damage_type": "physical"},
+        "Talon": {"id": 2, "roles": ["middle"], "damage_type": "physical"},
+        "Annie": {"id": 3, "roles": ["middle"], "damage_type": "magic", "favorable_matchups": ["Zed", "Talon"]},
+    })
+    snapshot = _pick_snapshot(assigned_position="middle", enemy_picks=[1, 2])
+
+    result = recommend_draft(snapshot, catalog, profile_loader_fn=profiles.get, candidate_names=["Annie"])
+
+    # flat bonus, not scaled by how many locked enemies matched -- same
+    # "flat, not scaled" rule direct_synergy already established
+    assert result[0]["details"]["score_breakdown"]["favorable_enemy_matchup"] == FAVORABLE_ENEMY_MATCHUP_BONUS
+    evidence_entry = next(e for e in result[0]["evidence"] if e["fact"] == "favorable_enemy_matchup")
+    assert set(evidence_entry["favorable_against"]) == {"Zed", "Talon"}
+    assert result[0]["details"]["locked_enemy_names"] == ["Zed", "Talon"]
+
+
+def test_repeated_locked_enemy_champion_is_not_double_counted():
+    catalog, profiles = _make_catalog_and_profiles({
+        "Zed": {"id": 1, "roles": ["middle"], "damage_type": "physical"},
+        "Annie": {"id": 2, "roles": ["middle"], "damage_type": "magic", "favorable_matchups": ["Zed"]},
+    })
+    # id 1 (Zed) appears twice -- a defensive/malformed-input case
+    snapshot = _pick_snapshot(assigned_position="middle", enemy_picks=[1, 1])
+
+    result = recommend_draft(snapshot, catalog, profile_loader_fn=profiles.get, candidate_names=["Annie"])
+
+    assert result[0]["details"]["locked_enemy_names"] == ["Zed"]  # deduplicated
+    assert result[0]["details"]["score_breakdown"]["favorable_enemy_matchup"] == FAVORABLE_ENEMY_MATCHUP_BONUS
+    evidence_entry = next(e for e in result[0]["evidence"] if e["fact"] == "favorable_enemy_matchup")
+    assert evidence_entry["favorable_against"] == ["Zed"]  # not ["Zed", "Zed"]
+
+
+def test_no_reverse_relationship_inference_from_enemy_profile():
+    catalog, profiles = _make_catalog_and_profiles({
+        # Zed's own profile lists Annie as favorable/counter -- but only the
+        # CANDIDATE's own profile may ever be read for this signal. Zed's
+        # profile must be completely irrelevant here.
+        "Zed": {
+            "id": 1, "roles": ["middle"], "damage_type": "physical",
+            "favorable_matchups": ["Annie"], "common_counters": ["Annie"],
+        },
+        "Annie": {"id": 2, "roles": ["middle"], "damage_type": "magic"},  # says nothing about Zed
+    })
+    snapshot = _pick_snapshot(assigned_position="middle", enemy_picks=[1])
+
+    result = recommend_draft(snapshot, catalog, profile_loader_fn=profiles.get, candidate_names=["Annie"])
+
+    breakdown = result[0]["details"]["score_breakdown"]
+    assert breakdown["favorable_enemy_matchup"] == 0
+    assert breakdown["common_counter_risk"] == 0
+    assert breakdown["total"] == 0
+
+
+def test_missing_enemy_profile_does_not_prevent_the_signal():
+    # The rule reads only the CANDIDATE's own profile -- the enemy doesn't
+    # need an authored profile at all for this signal to fire.
+    catalog, profiles = _make_catalog_and_profiles({
+        "Annie": {"id": 2, "roles": ["middle"], "damage_type": "magic", "favorable_matchups": ["GhostEnemy"]},
+    })
+    catalog["champions_by_id"][1] = {"id": 1, "name": "GhostEnemy"}
+    catalog["champions_by_name"]["ghostenemy"] = {"id": 1, "name": "GhostEnemy"}
+    # profiles.get("GhostEnemy") -> None: no authored profile for the enemy
+
+    snapshot = _pick_snapshot(assigned_position="middle", enemy_picks=[1])
+
+    result = recommend_draft(snapshot, catalog, profile_loader_fn=profiles.get, candidate_names=["Annie"])
+
+    assert result[0]["details"]["score_breakdown"]["favorable_enemy_matchup"] == FAVORABLE_ENEMY_MATCHUP_BONUS
+
+
 def test_never_mutates_snapshot_catalog_or_profiles():
     catalog, profiles = _make_catalog_and_profiles({
         "Garen": {"id": 1, "roles": ["top"], "damage_type": "physical"},
-        "Annie": {"id": 2, "roles": ["middle"], "damage_type": "magic"},
+        "Zed": {"id": 3, "roles": ["middle"], "damage_type": "physical"},
+        "Annie": {"id": 2, "roles": ["middle"], "damage_type": "magic", "favorable_matchups": ["Zed"]},
     })
-    snapshot = _pick_snapshot(assigned_position="middle", ally_picks=[1])
+    snapshot = _pick_snapshot(assigned_position="middle", ally_picks=[1], enemy_picks=[3])
     snapshot_copy = copy.deepcopy(snapshot)
     catalog_copy = copy.deepcopy(catalog)
     profiles_copy = copy.deepcopy(profiles)
@@ -561,6 +713,14 @@ if __name__ == "__main__":
     test_no_eligible_profiles_returns_unavailable_recommendation()
     test_unresolved_ally_ids_and_missing_profiles_are_recorded()
     test_pick_recommendation_details_include_strengths_and_playstyle_without_scoring_them()
+    test_favorable_enemy_matchup_improves_ranking()
+    test_common_counter_risk_lowers_ranking()
+    test_unresolved_enemy_ids_are_recorded_in_details()
+    test_unrelated_locked_enemy_has_zero_effect()
+    test_multiple_enemy_matches_remain_fully_inspectable()
+    test_repeated_locked_enemy_champion_is_not_double_counted()
+    test_no_reverse_relationship_inference_from_enemy_profile()
+    test_missing_enemy_profile_does_not_prevent_the_signal()
     test_never_mutates_snapshot_catalog_or_profiles()
     test_default_candidate_discovery_uses_real_profile_files_on_disk()
     print("All checks passed.")
