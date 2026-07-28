@@ -175,6 +175,32 @@ def test_propagates_unexpected_server_errors_instead_of_masking_them():
             raise AssertionError("Expected a 500 to raise rather than be swallowed as None")
 
 
+# ---- client-running check (cheap, local-only, no network) ----
+
+
+def test_is_client_running_true_when_lockfile_present():
+    with _TempLockfile() as lf:
+        lf.write(REAL_SHAPED_LOCKFILE_CONTENTS)
+        client = LCUClient(lockfile_path=lf.path, get_fn=lambda *a, **k: _FakeResponse(200, CHAMP_SELECT_SESSION))
+
+        assert client.is_client_running() is True
+
+
+def test_is_client_running_false_when_no_lockfile():
+    with _TempLockfile() as lf:
+        # lf.path is never written -- simulates League client not running
+        calls = []
+
+        def fake_get(*args, **kwargs):
+            calls.append(1)
+            return _FakeResponse(200, CHAMP_SELECT_SESSION)
+
+        client = LCUClient(lockfile_path=lf.path, get_fn=fake_get)
+
+        assert client.is_client_running() is False
+        assert calls == []  # no HTTP call is ever made by this check
+
+
 # ---- SessionPoller compatibility ----
 
 
@@ -213,6 +239,8 @@ if __name__ == "__main__":
     test_returns_none_on_404_no_champ_select_in_progress()
     test_returns_none_on_connection_error()
     test_propagates_unexpected_server_errors_instead_of_masking_them()
+    test_is_client_running_true_when_lockfile_present()
+    test_is_client_running_false_when_no_lockfile()
     test_lcu_client_works_as_a_session_poller_data_source_when_idle()
     test_lcu_client_works_as_a_session_poller_data_source_when_active()
     print("All checks passed.")

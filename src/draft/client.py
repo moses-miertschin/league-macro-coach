@@ -79,6 +79,19 @@ class LCUClient:
     def __call__(self):
         return self.get_champ_select_session()
 
+    def is_client_running(self) -> bool:
+        """Cheap, local-only check (lockfile presence, no network call) for
+        whether the League client itself is open -- independent of whether
+        a champ-select session exists. get_champ_select_session() already
+        collapses "client not running" and "client open but no session"
+        into the same None (a deliberate simplification documented in
+        CHECKPOINT.md); this method exists so a caller that genuinely needs
+        to distinguish the two (e.g. a runtime service reporting distinct
+        "league closed" vs "idle" states) can, without that existing
+        method's contract changing at all.
+        """
+        return self.lockfile_path.exists()
+
     def get_champ_select_session(self):
         credentials = self._read_credentials()
         if credentials is None:
