@@ -138,3 +138,25 @@ def load_champion_profile(champion: str, champions_dir: Path = CHAMPIONS_DIR) ->
         raise ValueError(f"Invalid champion profile for {champion!r} at {path}: {errors}")
 
     return profile
+
+
+def list_available_champion_profiles(champions_dir: Path = CHAMPIONS_DIR) -> list:
+    """Discovers every authored {champion}_profile.md in champions_dir and
+    returns their canonical champion names -- never a hardcoded roster, so
+    coverage grows automatically as new profile files are authored. Each
+    name comes from load_champion_profile() itself (the file's own
+    # Heading), the same source of truth used everywhere else in this
+    module. Sorted by filename for a deterministic order; a malformed file
+    still raises (via load_champion_profile()), consistent with this
+    module's existing "malformed data is a bug" discipline.
+    """
+    if not champions_dir.exists():
+        return []
+
+    names = []
+    for path in sorted(champions_dir.glob("*_profile.md")):
+        champion_arg = path.stem.removesuffix("_profile")
+        profile = load_champion_profile(champion_arg, champions_dir=champions_dir)
+        if profile is not None:
+            names.append(profile["champion"])
+    return names

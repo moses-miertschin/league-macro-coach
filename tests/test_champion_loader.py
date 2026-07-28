@@ -9,7 +9,7 @@ python -m tests.test_champion_loader
 import tempfile
 from pathlib import Path
 
-from src.knowledge.champion_loader import load_champion_profile
+from src.knowledge.champion_loader import list_available_champion_profiles, load_champion_profile
 from src.knowledge.champion_schema import validate_champion_profile
 
 SAMPLE_PROFILE_MD = """# Test Champion — Draft Profile
@@ -145,6 +145,23 @@ def test_title_without_subtitle_still_extracts_champion_name():
         assert profile["champion"] == "JustAName"
 
 
+def test_list_available_champion_profiles_discovers_and_sorts_deterministically():
+    with tempfile.TemporaryDirectory() as tmp:
+        champions_dir = Path(tmp)
+        (champions_dir / "testchampion_profile.md").write_text(SAMPLE_PROFILE_MD, encoding="utf-8")
+        (champions_dir / "minimal_profile.md").write_text("# Minimal Champion\n\n## Roles\n- Top\n", encoding="utf-8")
+        # a coexisting, unrelated coaching-notes file must never be picked up
+        (champions_dir / "testchampion.md").write_text("# Test Champion\n\n## Expected Role\nMid\n", encoding="utf-8")
+
+        names = list_available_champion_profiles(champions_dir=champions_dir)
+
+        assert names == ["Minimal Champion", "Test Champion"]  # sorted by filename, canonical heading names
+
+
+def test_list_available_champion_profiles_missing_directory_returns_empty():
+    assert list_available_champion_profiles(champions_dir=Path("does/not/exist")) == []
+
+
 if __name__ == "__main__":
     test_parses_full_profile_with_all_fields()
     test_case_insensitive_filename_lookup()
@@ -153,4 +170,6 @@ if __name__ == "__main__":
     test_loaded_profile_is_schema_valid()
     test_invalid_role_in_file_raises_instead_of_returning_bad_data()
     test_title_without_subtitle_still_extracts_champion_name()
+    test_list_available_champion_profiles_discovers_and_sorts_deterministically()
+    test_list_available_champion_profiles_missing_directory_returns_empty()
     print("All checks passed.")
