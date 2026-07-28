@@ -12,7 +12,7 @@ from pathlib import Path
 from src.draft.service import CHAMP_SELECT_ACTIVE, IDLE_NO_CHAMP_SELECT, LEAGUE_CLIENT_UNAVAILABLE, PROCESSING_ERROR
 from src.recommendations.schema import validate_recommendation
 from src.runtime.state_publisher import validate_state_shape
-from src.ui.demo_fixtures import DEMO_STATES_DIR, list_demo_state_files, load_demo_states
+from src.ui.demo_fixtures import DEMO_STATES_DIR, list_demo_state_files, load_demo_state_by_name, load_demo_states
 
 
 def test_demo_states_dir_exists_and_has_fixtures():
@@ -96,6 +96,46 @@ def test_custom_directory_is_honored():
         assert states[0]["state"] == IDLE_NO_CHAMP_SELECT
 
 
+def test_load_demo_state_by_name_finds_a_fixture_by_stem():
+    state = load_demo_state_by_name("03_champ_select_prelock_recommendations")
+
+    assert state["state"] == CHAMP_SELECT_ACTIVE
+
+
+def test_load_demo_state_by_name_accepts_a_json_suffix_too():
+    state = load_demo_state_by_name("03_champ_select_prelock_recommendations.json")
+
+    assert state["state"] == CHAMP_SELECT_ACTIVE
+
+
+def test_load_demo_state_by_name_raises_listing_available_names_for_a_typo():
+    try:
+        load_demo_state_by_name("not_a_real_fixture")
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        message = str(exc)
+        assert "not_a_real_fixture" in message
+        assert "03_champ_select_prelock_recommendations" in message
+
+
+def test_load_demo_state_by_name_honors_a_custom_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "01_custom.json"
+        path.write_text(json.dumps({
+            "state_schema_version": 1,
+            "state": IDLE_NO_CHAMP_SELECT,
+            "draft_snapshot": None,
+            "recommendations": [],
+            "champion_catalog_version": None,
+            "warnings": [],
+            "error": None,
+        }), encoding="utf-8")
+
+        state = load_demo_state_by_name("01_custom", directory=Path(tmp))
+
+        assert state["state"] == IDLE_NO_CHAMP_SELECT
+
+
 if __name__ == "__main__":
     test_demo_states_dir_exists_and_has_fixtures()
     test_list_demo_state_files_is_sorted_for_deterministic_cycling()
@@ -107,4 +147,8 @@ if __name__ == "__main__":
     test_load_demo_states_is_deterministic_and_independently_parsed()
     test_load_demo_states_raises_with_filename_on_a_malformed_fixture()
     test_custom_directory_is_honored()
+    test_load_demo_state_by_name_finds_a_fixture_by_stem()
+    test_load_demo_state_by_name_accepts_a_json_suffix_too()
+    test_load_demo_state_by_name_raises_listing_available_names_for_a_typo()
+    test_load_demo_state_by_name_honors_a_custom_directory()
     print("All checks passed.")

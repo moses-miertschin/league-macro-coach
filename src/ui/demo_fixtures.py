@@ -26,17 +26,31 @@ def list_demo_state_files(directory: Path = DEMO_STATES_DIR) -> list:
     return sorted(Path(directory).glob("*.json"))
 
 
+def _load_one(path: Path) -> dict:
+    state = json.loads(path.read_text(encoding="utf-8"))
+    errors = validate_state_shape(state)
+    if errors:
+        raise ValueError(f"Demo fixture {path.name} does not match the expected state shape: {errors}")
+    return state
+
+
 def load_demo_states(directory: Path = DEMO_STATES_DIR) -> list:
     """Parses and validates every fixture in directory. Raises ValueError
     naming the offending file for a malformed fixture -- that's an
     authoring bug in this project's own demo data, not an
     honestly-expected runtime absence, so it should fail loudly rather
     than silently skip a broken fixture."""
-    states = []
+    return [_load_one(path) for path in list_demo_state_files(directory)]
+
+
+def load_demo_state_by_name(name: str, directory: Path = DEMO_STATES_DIR) -> dict:
+    """Looks up one fixture by filename stem (e.g. --demo-state's value),
+    with or without a ".json" suffix. Raises ValueError listing the
+    available names for a typo -- a CLI usage error, not an
+    honestly-expected absence."""
+    target = Path(name).stem
     for path in list_demo_state_files(directory):
-        state = json.loads(path.read_text(encoding="utf-8"))
-        errors = validate_state_shape(state)
-        if errors:
-            raise ValueError(f"Demo fixture {path.name} does not match the expected state shape: {errors}")
-        states.append(state)
-    return states
+        if path.stem == target:
+            return _load_one(path)
+    available = ", ".join(path.stem for path in list_demo_state_files(directory))
+    raise ValueError(f"No demo fixture named {name!r} found in {directory}. Available: {available}")
