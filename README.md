@@ -11,7 +11,10 @@ reports stay on disk and out of version control (see `.gitignore`).
 
 ## Player Profile
 
-- Riot ID: `HelloKittler#meow`
+The tool targets a single player, configured via `.env` (see `.env.example`). The profile
+it was developed and validated against:
+
+- Riot ID: configured locally, not committed
 - Region: NA
 - Role: Mid
 - Champion pool: Yone, Akali, Fizz, Syndra
